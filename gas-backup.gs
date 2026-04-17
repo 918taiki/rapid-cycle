@@ -11,6 +11,11 @@
  *   4. 表示された「ウェブアプリのURL」をコピー
  *   5. Rapid Cycle の「設定 → クラウドバックアップ」に貼り付け
  *
+ * 【既に複数のスプレッドシートができてしまった場合】
+ *   いずれか 1 つを残して他を削除し、残したファイルの ID（URL の /d/〜/edit の間）を
+ *   Apps Script のプロジェクト設定 → スクリプトプロパティで
+ *   キー名 "SPREADSHEET_ID" に設定してください。以降はそのシートが再利用されます。
+ *
  * 【挙動】
  *   - doPost: 受信した JSON 文字列を「RapidCycleBackup」シートの A1 に保存
  *             （シートがなければ自動作成）
@@ -26,8 +31,20 @@ var SHEET_NAME = "RapidCycleBackup";
 function getSheet_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   if (!ss) {
-    // コンテナなしの場合は新規作成（Apps Script 単体のとき）
-    ss = SpreadsheetApp.create("RapidCycleBackup");
+    // スタンドアロンGASの場合: 初回のみ新規作成し、ID を Script Properties に記録して以降は再利用
+    var props = PropertiesService.getScriptProperties();
+    var id = props.getProperty("SPREADSHEET_ID");
+    if (id) {
+      try {
+        ss = SpreadsheetApp.openById(id);
+      } catch (_) {
+        ss = null;
+      }
+    }
+    if (!ss) {
+      ss = SpreadsheetApp.create("RapidCycleBackup");
+      props.setProperty("SPREADSHEET_ID", ss.getId());
+    }
   }
   var sheet = ss.getSheetByName(SHEET_NAME);
   if (!sheet) {
