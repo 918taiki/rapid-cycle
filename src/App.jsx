@@ -409,7 +409,7 @@ export default function RapidCycleApp() {
     // Divide by totalWeight (not by count) to avoid the "more reviews = lower score" paradox
     let accuracySum = 0;
     let peekSum = 0;
-    let totalWeight = 0;
+    let totalWeight = 0.5;  // ← 1回目正解時の急上昇を防ぐ仮想ペナルティ
 
     for (let i = 0; i < log.length; i++) {
       const entry = log[i];
