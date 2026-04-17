@@ -12,6 +12,7 @@ const DEFAULT_SETTINGS = {
   reappearR2: 0.50,
   memoryReappear: true,
   theme: "dark",
+  gasUrl: "",
 };
 
 const THEMES = {
@@ -99,6 +100,51 @@ function loadFromStorage(key, fallback) {
 
 function saveToStorage(key, data) {
   try { window.localStorage?.setItem(key, JSON.stringify(data)); } catch {}
+}
+
+function extractJson(text) {
+  if (!text) return null;
+  try { return JSON.parse(text); } catch {}
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try { return JSON.parse(text.slice(start, end + 1)); } catch {}
+  }
+  return null;
+}
+
+async function gasBackup(url, payload) {
+  if (!url) throw new Error("no url");
+  const body = JSON.stringify(payload);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      redirect: "follow",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body,
+    });
+    const text = await res.text();
+    const parsed = extractJson(text);
+    if (parsed && parsed.ok) return parsed;
+    throw new Error("post failed");
+  } catch {
+    // Fallback: GET with data param (URL length permitting)
+    const getUrl = url + (url.includes("?") ? "&" : "?") + "data=" + encodeURIComponent(body);
+    const res = await fetch(getUrl, { method: "GET", redirect: "follow" });
+    const text = await res.text();
+    const parsed = extractJson(text);
+    if (parsed && parsed.ok) return parsed;
+    throw new Error("backup failed");
+  }
+}
+
+async function gasRestore(url) {
+  if (!url) throw new Error("no url");
+  const res = await fetch(url, { method: "GET", redirect: "follow" });
+  const text = await res.text();
+  const parsed = extractJson(text);
+  if (!parsed || !parsed.ok) throw new Error("restore failed");
+  return parsed.data;
 }
 
 function parseCSV(text) {
@@ -262,6 +308,78 @@ export default function RapidCycleApp() {
   useEffect(() => { saveToStorage(STORAGE_KEY_STATS, stats); }, [stats]);
   useEffect(() => { saveToStorage(STORAGE_KEY_SETTINGS, settings); }, [settings]);
   useEffect(() => { saveToStorage(STORAGE_KEY_FOLDERS, folders); }, [folders]);
+
+  // Cloud backup/restore
+  const [cloudStatus, setCloudStatus] = useState(""); // "" | "saving" | "saved" | "restoring" | "restored" | "error"
+  const autoRestoredRef = useRef(false);
+
+  const runCloudBackup = useCallback(async (opts = {}) => {
+    const url = settings.gasUrl;
+    if (!url) return false;
+    const payload = { decks, stats, folders, settings: { ...settings, gasUrl: undefined }, v: 1 };
+    if (opts.silent !== true) setCloudStatus("saving");
+    try {
+      await gasBackup(url, payload);
+      if (opts.silent !== true) {
+        setCloudStatus("saved");
+        setTimeout(() => setCloudStatus(""), 3000);
+      }
+      return true;
+    } catch {
+      if (opts.silent !== true) {
+        setCloudStatus("error");
+        setTimeout(() => setCloudStatus(""), 3000);
+      }
+      return false;
+    }
+  }, [settings, decks, stats, folders]);
+
+  const runCloudRestore = useCallback(async (opts = {}) => {
+    const url = settings.gasUrl;
+    if (!url) return false;
+    if (opts.silent !== true) setCloudStatus("restoring");
+    try {
+      const data = await gasRestore(url);
+      if (!data) {
+        if (opts.silent !== true) {
+          setCloudStatus("error");
+          setTimeout(() => setCloudStatus(""), 3000);
+        }
+        return false;
+      }
+      if (data.decks) setDecks(data.decks);
+      if (data.stats) setStats(data.stats);
+      if (data.folders) setFolders(data.folders);
+      if (data.settings) setSettings(prev => ({ ...prev, ...data.settings, gasUrl: prev.gasUrl }));
+      if (opts.silent !== true) {
+        setCloudStatus("restored");
+        setTimeout(() => setCloudStatus(""), 3000);
+      }
+      return true;
+    } catch {
+      if (opts.silent !== true) {
+        setCloudStatus("error");
+        setTimeout(() => setCloudStatus(""), 3000);
+      }
+      return false;
+    }
+  }, [settings.gasUrl]);
+
+  // Auto-restore on startup: if gasUrl is set and local data is empty
+  useEffect(() => {
+    if (autoRestoredRef.current) return;
+    if (!settings.gasUrl) return;
+    if (decks.length > 0 || folders.length > 0 || Object.keys(stats).length > 0) return;
+    autoRestoredRef.current = true;
+    runCloudRestore({ silent: true });
+  }, [settings.gasUrl, decks.length, folders.length, stats, runCloudRestore]);
+
+  // Auto-backup when a study session finishes
+  useEffect(() => {
+    if (view !== "result") return;
+    if (!settings.gasUrl) return;
+    runCloudBackup({ silent: true });
+  }, [view, settings.gasUrl, runCloudBackup]);
 
   const currentCard = cards[currentIdx];
 
@@ -1433,6 +1551,43 @@ export default function RapidCycleApp() {
           </div>
 
           <div style={s.settingsSection}>
+            <p style={s.sectionLabel}>クラウドバックアップ (GAS)</p>
+            <div style={s.settingItem}>
+              <p style={s.settingDesc}>
+                Google Apps Script の Web アプリ URL を設定すると、学習セッション終了時に自動でバックアップされます。
+              </p>
+              <input
+                type="url"
+                value={settings.gasUrl || ""}
+                onChange={e => setSettings(prev => ({ ...prev, gasUrl: e.target.value.trim() }))}
+                placeholder="https://script.google.com/macros/s/.../exec"
+                style={{ ...s.input, width: "100%", padding: "10px 12px", fontSize: "13px", marginTop: "8px", boxSizing: "border-box" }}
+              />
+              <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+                <button
+                  style={{ ...s.ghostBtn, flex: 1, padding: "10px", fontSize: "13px", opacity: settings.gasUrl ? 1 : 0.5 }}
+                  disabled={!settings.gasUrl || cloudStatus === "saving" || cloudStatus === "restoring"}
+                  onClick={() => runCloudBackup()}
+                >
+                  {cloudStatus === "saving" ? "保存中..." : cloudStatus === "saved" ? "✓ 保存完了" : "今すぐバックアップ"}
+                </button>
+                <button
+                  style={{ ...s.ghostBtn, flex: 1, padding: "10px", fontSize: "13px", opacity: settings.gasUrl ? 1 : 0.5 }}
+                  disabled={!settings.gasUrl || cloudStatus === "saving" || cloudStatus === "restoring"}
+                  onClick={() => {
+                    if (confirm("クラウドのデータで現在のデータを上書きしますか？")) runCloudRestore();
+                  }}
+                >
+                  {cloudStatus === "restoring" ? "復元中..." : cloudStatus === "restored" ? "✓ 復元完了" : "復元する"}
+                </button>
+              </div>
+              {cloudStatus === "error" && (
+                <p style={{ fontSize: "12px", color: "#f87171", margin: "8px 0 0" }}>通信に失敗しました。URL を確認してください。</p>
+              )}
+            </div>
+          </div>
+
+          <div style={s.settingsSection}>
             <p style={s.sectionLabel}>データのバックアップ</p>
             <div style={s.settingItem}>
               <p style={s.settingDesc}>
@@ -1492,7 +1647,7 @@ export default function RapidCycleApp() {
           </div>
 
           <div style={{ marginTop: "auto", paddingTop: "20px" }}>
-            <button style={s.ghostBtn} onClick={() => setSettings(prev => ({ ...DEFAULT_SETTINGS }))}>
+            <button style={s.ghostBtn} onClick={() => setSettings(prev => ({ ...DEFAULT_SETTINGS, gasUrl: prev.gasUrl }))}>
               デフォルトに戻す
             </button>
           </div>
