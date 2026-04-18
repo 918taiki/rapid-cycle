@@ -2102,6 +2102,71 @@ export default function RapidCycleApp() {
             </div>
           );
         })()}
+
+        {/* 孤立ファイル確認モーダル */}
+        {manualBackupPhase === "confirming" && (
+          <div style={s.modalOverlay} onClick={() => resolveOrphanChoice("cancel")}>
+            <div style={{ ...s.modal, maxWidth: "380px" }} onClick={e => e.stopPropagation()}>
+              <p style={s.modalTitle}>クラウドの孤立ファイルを処理</p>
+              <p style={s.modalDesc}>
+                以下のデッキがクラウドに残っていますが、端末には存在しません。
+              </p>
+              <div style={{
+                maxHeight: "200px",
+                overflowY: "auto",
+                background: t.inputBg,
+                borderRadius: "10px",
+                padding: "10px 14px",
+                margin: "0 0 12px",
+                border: `1px solid ${t.borderLight}`,
+              }}>
+                {orphanSummaries.map(sm => (
+                  <div key={sm.id} style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    padding: "6px 0",
+                    fontSize: "13px",
+                    borderBottom: `1px solid ${t.borderLight}`,
+                  }}>
+                    <span style={{ color: t.text, fontWeight: "500" }}>{sm.name}</span>
+                    <span style={{ color: t.textMuted, fontFamily: mono, fontSize: "12px" }}>
+                      {sm.wordCount}語
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <p style={{ ...s.modalDesc, fontSize: "12px", margin: "0 0 16px" }}>
+                削除しないと、次回復元したときにこれらのデッキが復活します。
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                <button
+                  style={{ ...s.modalConfirmBtn, width: "100%" }}
+                  onClick={() => resolveOrphanChoice("delete")}
+                >
+                  削除して完全同期
+                </button>
+                <button
+                  style={{ ...s.modalCancelBtn, width: "100%" }}
+                  onClick={() => resolveOrphanChoice("keep")}
+                >
+                  削除せずアップロードのみ
+                </button>
+                <button
+                  style={{
+                    ...s.modalCancelBtn,
+                    width: "100%",
+                    background: "transparent",
+                    border: `1px solid ${t.border}`,
+                    color: t.textMuted,
+                  }}
+                  onClick={() => resolveOrphanChoice("cancel")}
+                >
+                  キャンセル
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
