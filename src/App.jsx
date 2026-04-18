@@ -671,6 +671,7 @@ export default function RapidCycleApp() {
       const words = activeDeck.words.filter((_, i) => i !== deleteConfirm.idx);
       updateDeckWords(activeDeck.id, words);
       setEditingIdx(null);
+      scheduleDeckSync({ ...activeDeck, words });
     } else if (deleteConfirm.type === "stats") {
       setStats({});
     } else if (deleteConfirm.type === "restore") {
@@ -1292,6 +1293,7 @@ export default function RapidCycleApp() {
     }
     updateDeckWords(activeDeck.id, words);
     setEditingIdx(null);
+    scheduleDeckSync({ ...activeDeck, words });
   };
 
   const deleteWord = (idx) => {
@@ -1305,6 +1307,7 @@ export default function RapidCycleApp() {
     setDecks(prev => prev.map(d => d.id === activeDeck.id ? { ...d, name: newName } : d));
     setActiveDeck(prev => prev ? { ...prev, name: newName } : prev);
     setIsRenamingDeck(false);
+    scheduleDeckSync({ ...activeDeck, name: newName });
   };
 
   const exportDeck = async () => {
