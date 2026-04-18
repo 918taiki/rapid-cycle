@@ -444,6 +444,9 @@ export default function RapidCycleApp() {
 
   // Cloud backup/restore
   const [cloudStatus, setCloudStatus] = useState(""); // "" | "saving" | "saved" | "restoring" | "restored" | "error"
+  const [manualBackupPhase, setManualBackupPhase] = useState(null); // null | "checking" | "confirming" | "syncing" | "done" | "error"
+  const [orphanSummaries, setOrphanSummaries] = useState([]);
+  const orphanResolveRef = useRef(null);
   const autoRestoredRef = useRef(false);
   const cloudAbortRef = useRef(null); // クラウド通信の重複防止
   const lastAutoBackupAtRef = useRef(0);
@@ -484,6 +487,29 @@ export default function RapidCycleApp() {
     if (!url) throw new Error("no url");
     return fetchJson(url, { action: "deleteDeck", deckId }, signal);
   }, [settings.gasUrl]);
+
+  // クラウドにある全デッキIDを取得
+  const fetchCloudDeckList = useCallback(async (signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    const res = await fetchJson(url, { action: "listDecks" }, signal);
+    return res.deckIds || [];
+  }, [settings.gasUrl]);
+
+  // 指定デッキIDの名前・語数をクラウドから取得
+  const fetchDeckSummaries = useCallback(async (deckIds, signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    if (deckIds.length === 0) return [];
+    const res = await fetchJson(url, { action: "getDeckSummaries", deckIds }, signal);
+    return res.summaries || [];
+  }, [settings.gasUrl]);
+
+  // クラウドにあってローカルにないデッキIDを返す
+  const detectOrphanDeckIds = useCallback((cloudDeckIds) => {
+    const localIds = new Set(decks.map(d => d.id));
+    return cloudDeckIds.filter(id => !localIds.has(id));
+  }, [decks]);
 
   // ─── PENDING HELPERS ───
   const addPendingDeletion = useCallback((deckId) => {
@@ -526,6 +552,39 @@ export default function RapidCycleApp() {
     setPending(prev => prev.metaDirty ? { ...prev, metaDirty: false } : prev);
   }, []);
 
+  // confirming 以外になったら orphanSummaries をクリア
+  useEffect(() => {
+    if (manualBackupPhase !== "confirming") {
+      setOrphanSummaries([]);
+    }
+  }, [manualBackupPhase]);
+
+  // アンマウント時: モーダル表示中なら cancel で resolve して宙に浮かせない
+  useEffect(() => {
+    return () => {
+      if (orphanResolveRef.current) {
+        orphanResolveRef.current("cancel");
+        orphanResolveRef.current = null;
+      }
+    };
+  }, []);
+
+  // 孤立確認モーダルを表示し、ユーザーの選択を待つ（"delete" | "keep" | "cancel"）
+  const showOrphanConfirmModal = useCallback((summaries) => {
+    return new Promise((resolve) => {
+      setOrphanSummaries(summaries);
+      setManualBackupPhase("confirming");
+      orphanResolveRef.current = resolve;
+    });
+  }, []);
+
+  const resolveOrphanChoice = useCallback((choice) => {
+    if (orphanResolveRef.current) {
+      orphanResolveRef.current(choice);
+      orphanResolveRef.current = null;
+    }
+  }, []);
+
   const runCloudBackup = useCallback(async (opts = {}) => {
     const url = settings.gasUrl;
     if (!url) return false;
@@ -534,32 +593,94 @@ export default function RapidCycleApp() {
     const controller = new AbortController();
     cloudAbortRef.current = controller;
 
-    if (opts.silent !== true) setCloudStatus("saving");
+    const isSilent = opts.silent === true;
+
     try {
-      // 全デッキを順次送信
+      // フェーズ1: クラウドの一覧チェック（silent モードでは孤立チェックをスキップ）
+      let orphanIds = [];
+      if (!isSilent) {
+        setManualBackupPhase("checking");
+        setCloudStatus("saving");
+        const cloudDeckIds = await fetchCloudDeckList(controller.signal);
+        orphanIds = detectOrphanDeckIds(cloudDeckIds);
+      }
+
+      // フェーズ2: 孤立ファイルがあればユーザー確認
+      let deleteOrphans = false;
+      if (orphanIds.length > 0) {
+        const summaries = await fetchDeckSummaries(orphanIds, controller.signal);
+        const choice = await showOrphanConfirmModal(summaries);
+        if (choice === "cancel") {
+          setManualBackupPhase(null);
+          setCloudStatus("");
+          return false;
+        }
+        deleteOrphans = choice === "delete";
+      }
+
+      // フェーズ3: バックアップ処理
+      if (!isSilent) setManualBackupPhase("syncing");
+
+      // 孤立ファイル削除（選択された場合）
+      if (deleteOrphans) {
+        for (const deckId of orphanIds) {
+          if (controller.signal.aborted) return false;
+          try {
+            await deleteDeckFromCloud(deckId, controller.signal);
+          } catch (err) {
+            if (err && err.name === "AbortError") return false;
+            console.warn(`orphan delete failed for ${deckId}`, err);
+          }
+        }
+      }
+
+      // 全デッキをアップロード
       for (const deck of decks) {
         if (controller.signal.aborted) return false;
         await syncDeck(deck, controller.signal);
       }
-      // meta.json を送信
+
+      // meta.json 更新
       if (!controller.signal.aborted) {
         await syncMeta(controller.signal);
       }
-      if (opts.silent !== true) {
-        setCloudStatus("saved");
-        scheduleTimeout(() => setCloudStatus(""), 3000);
-      }
+
       processPendingInBackgroundRef.current();
+
+      if (!isSilent) {
+        setManualBackupPhase("done");
+        setCloudStatus("saved");
+        scheduleTimeout(() => {
+          setManualBackupPhase(null);
+          setCloudStatus("");
+        }, 3000);
+      }
       return true;
     } catch (err) {
-      if (err && err.name === "AbortError") return false;
-      if (opts.silent !== true) {
+      if (err && err.name === "AbortError") {
+        if (!isSilent) {
+          setManualBackupPhase(null);
+          setCloudStatus("");
+        }
+        return false;
+      }
+      console.warn("runCloudBackup failed", err);
+      if (!isSilent) {
+        setManualBackupPhase("error");
         setCloudStatus("error");
-        scheduleTimeout(() => setCloudStatus(""), 3000);
+        scheduleTimeout(() => {
+          setManualBackupPhase(null);
+          setCloudStatus("");
+        }, 3000);
       }
       return false;
     }
-  }, [settings.gasUrl, decks, syncDeck, syncMeta, scheduleTimeout]);
+  }, [
+    settings.gasUrl, decks,
+    fetchCloudDeckList, detectOrphanDeckIds, fetchDeckSummaries,
+    showOrphanConfirmModal, deleteDeckFromCloud, syncDeck, syncMeta,
+    scheduleTimeout,
+  ]);
 
   const runCloudRestore = useCallback(async (opts = {}) => {
     const url = settings.gasUrl;
@@ -1939,10 +2060,15 @@ export default function RapidCycleApp() {
               <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
                 <button
                   style={{ ...s.ghostBtn, flex: 1, padding: "10px", fontSize: "13px", opacity: settings.gasUrl ? 1 : 0.5 }}
-                  disabled={!settings.gasUrl || cloudStatus === "saving" || cloudStatus === "restoring"}
+                  disabled={!settings.gasUrl || manualBackupPhase !== null}
                   onClick={() => runCloudBackup()}
                 >
-                  {cloudStatus === "saving" ? "保存中..." : cloudStatus === "saved" ? "✓ 保存完了" : "今すぐバックアップ"}
+                  {manualBackupPhase === "checking" && "クラウド確認中..."}
+                  {manualBackupPhase === "confirming" && "確認待ち..."}
+                  {manualBackupPhase === "syncing" && "バックアップ中..."}
+                  {manualBackupPhase === "done" && "✓ 完了"}
+                  {manualBackupPhase === "error" && "エラー"}
+                  {manualBackupPhase === null && "今すぐバックアップ"}
                 </button>
                 <button
                   style={{ ...s.ghostBtn, flex: 1, padding: "10px", fontSize: "13px", opacity: settings.gasUrl ? 1 : 0.5 }}
@@ -2043,6 +2169,71 @@ export default function RapidCycleApp() {
             </div>
           );
         })()}
+
+        {/* 孤立ファイル確認モーダル */}
+        {manualBackupPhase === "confirming" && (
+          <div style={s.modalOverlay} onClick={() => resolveOrphanChoice("cancel")}>
+            <div style={{ ...s.modal, maxWidth: "380px" }} onClick={e => e.stopPropagation()}>
+              <p style={s.modalTitle}>クラウドの孤立ファイルを処理</p>
+              <p style={s.modalDesc}>
+                以下のデッキがクラウドに残っていますが、端末には存在しません。
+              </p>
+              <div style={{
+                maxHeight: "200px",
+                overflowY: "auto",
+                background: t.inputBg,
+                borderRadius: "10px",
+                padding: "10px 14px",
+                margin: "0 0 12px",
+                border: `1px solid ${t.borderLight}`,
+              }}>
+                {orphanSummaries.map(sm => (
+                  <div key={sm.id} style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    padding: "6px 0",
+                    fontSize: "13px",
+                    borderBottom: `1px solid ${t.borderLight}`,
+                  }}>
+                    <span style={{ color: t.text, fontWeight: "500" }}>{sm.name}</span>
+                    <span style={{ color: t.textMuted, fontFamily: mono, fontSize: "12px" }}>
+                      {sm.wordCount}語
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <p style={{ ...s.modalDesc, fontSize: "12px", margin: "0 0 16px" }}>
+                削除しないと、次回復元したときにこれらのデッキが復活します。
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                <button
+                  style={{ ...s.modalConfirmBtn, width: "100%" }}
+                  onClick={() => resolveOrphanChoice("delete")}
+                >
+                  削除して完全同期
+                </button>
+                <button
+                  style={{ ...s.modalCancelBtn, width: "100%" }}
+                  onClick={() => resolveOrphanChoice("keep")}
+                >
+                  削除せずアップロードのみ
+                </button>
+                <button
+                  style={{
+                    ...s.modalCancelBtn,
+                    width: "100%",
+                    background: "transparent",
+                    border: `1px solid ${t.border}`,
+                    color: t.textMuted,
+                  }}
+                  onClick={() => resolveOrphanChoice("cancel")}
+                >
+                  キャンセル
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
