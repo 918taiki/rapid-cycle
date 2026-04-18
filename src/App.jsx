@@ -735,48 +735,112 @@ export default function RapidCycleApp() {
     const controller = new AbortController();
     cloudAbortRef.current = controller;
 
-    if (opts.silent !== true) setCloudStatus("restoring");
-    try {
-      // 1. meta.json 取得
-      const metaRes = await fetchJson(url, { action: "getMeta" }, controller.signal);
-      const meta = metaRes.data;
+    // silent モード（起動時の自動復元）は従来通りの簡易フロー
+    if (opts.silent === true) {
+      try {
+        const metaRes = await fetchJson(url, { action: "getMeta" }, controller.signal);
+        const meta = metaRes.data;
+        const listRes = await fetchJson(url, { action: "listDecks" }, controller.signal);
+        const deckIds = listRes.deckIds || [];
+        const fetchedDecks = [];
+        const fetchedStats = {};
+        for (const deckId of deckIds) {
+          if (controller.signal.aborted) return false;
+          const data = await fetchCloudDeck(deckId, controller.signal);
+          if (data) {
+            fetchedDecks.push(data.deck);
+            Object.assign(fetchedStats, data.stats || {});
+          }
+        }
+        setDecks(fetchedDecks);
+        setStats(fetchedStats);
+        setFolders((meta && meta.folders) || []);
+        setPending(DEFAULT_PENDING);
+        return true;
+      } catch (err) {
+        if (err && err.name === "AbortError") return false;
+        return false;
+      }
+    }
 
-      // 2. デッキ一覧取得
+    try {
+      // フェーズ1: クラウド概要取得
+      setRestorePhase("checking");
+      setRestoreError("");
+      const cloudSummary = await fetchCloudSummary(controller.signal);
+
+      // フェーズ2: ユーザー確認
+      const choice = await showRestoreConfirmModal(cloudSummary);
+      if (choice === "cancel") {
+        setRestorePhase(null);
+        setRestoreCloudSummary(null);
+        return false;
+      }
+
+      // フェーズ3: 取得処理（ローカルは一切変更しない）
+      setRestorePhase("fetching");
+      setRestoreProgress({ current: 0, total: 0, message: "メタ情報を取得中..." });
+
+      const meta = await fetchCloudMeta(controller.signal);
+      if (controller.signal.aborted) return false;
+
+      setRestoreProgress({ current: 0, total: 0, message: "単語帳一覧を取得中..." });
       const listRes = await fetchJson(url, { action: "listDecks" }, controller.signal);
       const deckIds = listRes.deckIds || [];
+      if (controller.signal.aborted) return false;
 
-      // 3. 各デッキを順次取得
       const fetchedDecks = [];
       const fetchedStats = {};
-      for (const deckId of deckIds) {
+      for (let i = 0; i < deckIds.length; i++) {
         if (controller.signal.aborted) return false;
-        const deckRes = await fetchJson(url, { action: "getDeck", deckId }, controller.signal);
-        if (deckRes.data) {
-          fetchedDecks.push(deckRes.data.deck);
-          Object.assign(fetchedStats, deckRes.data.stats);
-        }
+        setRestoreProgress({
+          current: i + 1,
+          total: deckIds.length,
+          message: `単語帳を取得中... (${i + 1}/${deckIds.length})`,
+        });
+        const data = await fetchCloudDeck(deckIds[i], controller.signal);
+        if (!data) throw new Error(`デッキ ${deckIds[i]} の取得に失敗しました`);
+        fetchedDecks.push(data.deck);
+        Object.assign(fetchedStats, data.stats || {});
       }
 
-      // 4. ローカル上書き（P1では単純適用。P5でトランザクション化）
+      // フェーズ4: 一括適用（トランザクション的）
+      setRestorePhase("applying");
+      setRestoreProgress({ current: 0, total: 0, message: "適用中..." });
       setDecks(fetchedDecks);
       setStats(fetchedStats);
-      if (meta && meta.folders) setFolders(meta.folders);
+      setFolders((meta && meta.folders) || []);
       setPending(DEFAULT_PENDING);
 
-      if (opts.silent !== true) {
-        setCloudStatus("restored");
-        scheduleTimeout(() => setCloudStatus(""), 3000);
-      }
+      // フェーズ5: 完了
+      setRestorePhase("done");
+      scheduleTimeout(() => {
+        setRestorePhase(null);
+        setRestoreCloudSummary(null);
+        setRestoreProgress({ current: 0, total: 0, message: "" });
+      }, 3000);
       return true;
     } catch (err) {
-      if (err && err.name === "AbortError") return false;
-      if (opts.silent !== true) {
-        setCloudStatus("error");
-        scheduleTimeout(() => setCloudStatus(""), 3000);
+      if (err && err.name === "AbortError") {
+        setRestorePhase(null);
+        setRestoreCloudSummary(null);
+        return false;
       }
+      console.warn("runCloudRestore failed", err);
+      setRestoreError(err.message || "復元に失敗しました");
+      setRestorePhase("error");
+      scheduleTimeout(() => {
+        setRestorePhase(null);
+        setRestoreCloudSummary(null);
+        setRestoreError("");
+      }, 5000);
       return false;
     }
-  }, [settings.gasUrl, scheduleTimeout]);
+  }, [
+    settings.gasUrl,
+    fetchCloudSummary, showRestoreConfirmModal, fetchCloudMeta, fetchCloudDeck,
+    scheduleTimeout,
+  ]);
 
   // Auto-restore on startup: if gasUrl is set and local data is empty
   useEffect(() => {
