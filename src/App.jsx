@@ -280,6 +280,38 @@ export default function RapidCycleApp() {
   const animIdRef = useRef(0);
   const sessionIdRef = useRef("");
 
+  // タイマー/RAFのクリーンアップ管理
+  const timersRef = useRef(new Set());
+  const rafsRef = useRef(new Set());
+
+  const scheduleTimeout = useCallback((fn, delay) => {
+    const id = setTimeout(() => {
+      timersRef.current.delete(id);
+      fn();
+    }, delay);
+    timersRef.current.add(id);
+    return id;
+  }, []);
+
+  const scheduleRAF = useCallback((fn) => {
+    const id = requestAnimationFrame(() => {
+      rafsRef.current.delete(id);
+      fn();
+    });
+    rafsRef.current.add(id);
+    return id;
+  }, []);
+
+  // アンマウント時に全タイマー/RAFをクリーンアップ
+  useEffect(() => {
+    return () => {
+      timersRef.current.forEach(clearTimeout);
+      timersRef.current.clear();
+      rafsRef.current.forEach(cancelAnimationFrame);
+      rafsRef.current.clear();
+    };
+  }, []);
+
   // Import state
   const [importText, setImportText] = useState("");
   const [deckName, setDeckName] = useState("");
@@ -322,17 +354,17 @@ export default function RapidCycleApp() {
       await gasBackup(url, payload);
       if (opts.silent !== true) {
         setCloudStatus("saved");
-        setTimeout(() => setCloudStatus(""), 3000);
+        scheduleTimeout(() => setCloudStatus(""), 3000);
       }
       return true;
     } catch {
       if (opts.silent !== true) {
         setCloudStatus("error");
-        setTimeout(() => setCloudStatus(""), 3000);
+        scheduleTimeout(() => setCloudStatus(""), 3000);
       }
       return false;
     }
-  }, [settings, decks, stats, folders]);
+  }, [settings, decks, stats, folders, scheduleTimeout]);
 
   const runCloudRestore = useCallback(async (opts = {}) => {
     const url = settings.gasUrl;
@@ -343,7 +375,7 @@ export default function RapidCycleApp() {
       if (!data) {
         if (opts.silent !== true) {
           setCloudStatus("error");
-          setTimeout(() => setCloudStatus(""), 3000);
+          scheduleTimeout(() => setCloudStatus(""), 3000);
         }
         return false;
       }
@@ -353,17 +385,17 @@ export default function RapidCycleApp() {
       if (data.settings) setSettings(prev => ({ ...prev, ...data.settings, gasUrl: prev.gasUrl }));
       if (opts.silent !== true) {
         setCloudStatus("restored");
-        setTimeout(() => setCloudStatus(""), 3000);
+        scheduleTimeout(() => setCloudStatus(""), 3000);
       }
       return true;
     } catch {
       if (opts.silent !== true) {
         setCloudStatus("error");
-        setTimeout(() => setCloudStatus(""), 3000);
+        scheduleTimeout(() => setCloudStatus(""), 3000);
       }
       return false;
     }
-  }, [settings.gasUrl]);
+  }, [settings.gasUrl, scheduleTimeout]);
 
   // Auto-restore on startup: if gasUrl is set and local data is empty
   useEffect(() => {
@@ -623,13 +655,13 @@ export default function RapidCycleApp() {
     setAnimatingCards(prev => [...prev, { id, card, wasFlipped, startX: swipeEndX || 0, startY: swipeEndY || 0, exitX, exitY, exitRotate, phase: "start" }]);
 
     // Phase 2: trigger exit on next frame
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
+    scheduleRAF(() => {
+      scheduleRAF(() => {
         setAnimatingCards(prev => prev.map(a => a.id === id ? { ...a, phase: "exit" } : a));
       });
     });
 
-    setTimeout(() => {
+    scheduleTimeout(() => {
       setAnimatingCards(prev => prev.filter(a => a.id !== id));
     }, 1100);
 
@@ -1109,7 +1141,7 @@ export default function RapidCycleApp() {
     try {
       await navigator.clipboard.writeText(csv);
       setExportCopied(true);
-      setTimeout(() => setExportCopied(false), 2000);
+      scheduleTimeout(() => setExportCopied(false), 2000);
     } catch {
       // Fallback: open in new window
       const w = window.open();
@@ -1600,10 +1632,10 @@ export default function RapidCycleApp() {
                     try {
                       await navigator.clipboard.writeText(payload);
                       setBackupStatus("saved");
-                      setTimeout(() => setBackupStatus(""), 3000);
+                      scheduleTimeout(() => setBackupStatus(""), 3000);
                     } catch {
                       setBackupStatus("error");
-                      setTimeout(() => setBackupStatus(""), 3000);
+                      scheduleTimeout(() => setBackupStatus(""), 3000);
                     }
                   }}
                 >
@@ -1619,10 +1651,10 @@ export default function RapidCycleApp() {
                       if (d.folders) setFolders(d.folders);
                       if (d.settings) setSettings(prev => ({ ...prev, ...d.settings, gasUrl: prev.gasUrl }));
                       setBackupStatus("restored");
-                      setTimeout(() => setBackupStatus(""), 3000);
+                      scheduleTimeout(() => setBackupStatus(""), 3000);
                     } catch {
                       setBackupStatus("error");
-                      setTimeout(() => setBackupStatus(""), 3000);
+                      scheduleTimeout(() => setBackupStatus(""), 3000);
                     }
                   }}
                 >
