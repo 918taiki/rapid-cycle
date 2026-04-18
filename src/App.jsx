@@ -2928,6 +2928,8 @@ function makeStyles(t) { return {
     overflowY: "auto",
     WebkitOverflowScrolling: "touch",
     paddingBottom: "env(safe-area-inset-bottom, 20px)",
+    maskImage: "linear-gradient(to bottom, transparent 0px, black 20px, black calc(100% - 48px), transparent 100%)",
+    WebkitMaskImage: "linear-gradient(to bottom, transparent 0px, black 20px, black calc(100% - 48px), transparent 100%)",
   },
 
   // ── Home ──
