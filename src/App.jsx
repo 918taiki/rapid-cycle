@@ -692,9 +692,17 @@ export default function RapidCycleApp() {
     return newDeck;
   };
 
-  const deleteDeck = (id) => {
+  const deleteDeck = useCallback((id) => {
     setDecks(prev => prev.filter(d => d.id !== id));
-  };
+    if (settings.gasUrl) {
+      const controller = new AbortController();
+      deleteDeckFromCloud(id, controller.signal).catch(err => {
+        if (err && err.name === "AbortError") return;
+        console.warn("deleteDeckFromCloud failed, adding to pending", err);
+        addPendingDeletion(id);
+      });
+    }
+  }, [settings.gasUrl, deleteDeckFromCloud, addPendingDeletion]);
 
   // ─── FOLDER MANAGEMENT ───
   const createFolder = (name) => {
