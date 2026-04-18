@@ -2060,10 +2060,15 @@ export default function RapidCycleApp() {
               <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
                 <button
                   style={{ ...s.ghostBtn, flex: 1, padding: "10px", fontSize: "13px", opacity: settings.gasUrl ? 1 : 0.5 }}
-                  disabled={!settings.gasUrl || cloudStatus === "saving" || cloudStatus === "restoring"}
+                  disabled={!settings.gasUrl || manualBackupPhase !== null}
                   onClick={() => runCloudBackup()}
                 >
-                  {cloudStatus === "saving" ? "保存中..." : cloudStatus === "saved" ? "✓ 保存完了" : "今すぐバックアップ"}
+                  {manualBackupPhase === "checking" && "クラウド確認中..."}
+                  {manualBackupPhase === "confirming" && "確認待ち..."}
+                  {manualBackupPhase === "syncing" && "バックアップ中..."}
+                  {manualBackupPhase === "done" && "✓ 完了"}
+                  {manualBackupPhase === "error" && "エラー"}
+                  {manualBackupPhase === null && "今すぐバックアップ"}
                 </button>
                 <button
                   style={{ ...s.ghostBtn, flex: 1, padding: "10px", fontSize: "13px", opacity: settings.gasUrl ? 1 : 0.5 }}
