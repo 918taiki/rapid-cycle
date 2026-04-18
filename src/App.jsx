@@ -658,12 +658,38 @@ export default function RapidCycleApp() {
     const id = Date.now().toString(36) + "f";
     const folder = { id, name };
     setFolders(prev => [...prev, folder]);
+    if (settings.gasUrl) {
+      // setFolders 直後は state 更新前なので次フレームで実行
+      const controller = new AbortController();
+      scheduleTimeout(() => {
+        syncMeta(controller.signal).catch(err => {
+          if (err && err.name === "AbortError") return;
+          console.warn("immediate syncMeta (folder create) failed", err);
+        });
+      }, 0);
+    }
     return folder;
   };
 
   const deleteFolder = (id) => {
+    const affectedDecks = decks.filter(d => d.folderId === id);
     setDecks(prev => prev.map(d => d.folderId === id ? { ...d, folderId: null } : d));
     setFolders(prev => prev.filter(f => f.id !== id));
+    if (settings.gasUrl) {
+      const controller = new AbortController();
+      scheduleTimeout(() => {
+        syncMeta(controller.signal).catch(err => {
+          if (err && err.name === "AbortError") return;
+          console.warn("immediate syncMeta (folder delete) failed", err);
+        });
+        for (const d of affectedDecks) {
+          syncDeck({ ...d, folderId: null }, controller.signal).catch(err => {
+            if (err && err.name === "AbortError") return;
+            console.warn("syncDeck (folder delete cascade) failed", err);
+          });
+        }
+      }, 0);
+    }
   };
 
   const executeDelete = () => {
