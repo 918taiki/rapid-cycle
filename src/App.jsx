@@ -552,6 +552,23 @@ export default function RapidCycleApp() {
     setPending(prev => prev.metaDirty ? { ...prev, metaDirty: false } : prev);
   }, []);
 
+  // confirming 以外になったら orphanSummaries をクリア
+  useEffect(() => {
+    if (manualBackupPhase !== "confirming") {
+      setOrphanSummaries([]);
+    }
+  }, [manualBackupPhase]);
+
+  // アンマウント時: モーダル表示中なら cancel で resolve して宙に浮かせない
+  useEffect(() => {
+    return () => {
+      if (orphanResolveRef.current) {
+        orphanResolveRef.current("cancel");
+        orphanResolveRef.current = null;
+      }
+    };
+  }, []);
+
   const runCloudBackup = useCallback(async (opts = {}) => {
     const url = settings.gasUrl;
     if (!url) return false;
@@ -646,6 +663,22 @@ export default function RapidCycleApp() {
     autoRestoredRef.current = true;
     runCloudRestore({ silent: true });
   }, [settings.gasUrl, decks.length, folders.length, stats, runCloudRestore]);
+
+  // 孤立確認モーダルを表示し、ユーザーの選択を待つ（"delete" | "keep" | "cancel"）
+  const showOrphanConfirmModal = useCallback((summaries) => {
+    return new Promise((resolve) => {
+      setOrphanSummaries(summaries);
+      setManualBackupPhase("confirming");
+      orphanResolveRef.current = resolve;
+    });
+  }, []);
+
+  const resolveOrphanChoice = useCallback((choice) => {
+    if (orphanResolveRef.current) {
+      orphanResolveRef.current(choice);
+      orphanResolveRef.current = null;
+    }
+  }, []);
 
   // 保留中の操作をリトライする
   const processPending = useCallback(async () => {
