@@ -122,41 +122,6 @@ function extractJson(text) {
   return null;
 }
 
-async function gasBackup(url, payload, signal) {
-  if (!url) throw new Error("no url");
-  const body = JSON.stringify(payload);
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      redirect: "follow",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body,
-      signal,
-    });
-    const text = await res.text();
-    const parsed = extractJson(text);
-    if (parsed && parsed.ok) return parsed;
-    throw new Error("post failed");
-  } catch (err) {
-    if (err && err.name === "AbortError") throw err;
-    // Fallback: GET with data param (URL length permitting)
-    const getUrl = url + (url.includes("?") ? "&" : "?") + "data=" + encodeURIComponent(body);
-    const res = await fetch(getUrl, { method: "GET", redirect: "follow", signal });
-    const text = await res.text();
-    const parsed = extractJson(text);
-    if (parsed && parsed.ok) return parsed;
-    throw new Error("backup failed");
-  }
-}
-
-async function gasRestore(url, signal) {
-  if (!url) throw new Error("no url");
-  const res = await fetch(url, { method: "GET", redirect: "follow", signal });
-  const text = await res.text();
-  const parsed = extractJson(text);
-  if (!parsed || !parsed.ok) throw new Error("restore failed");
-  return parsed.data;
-}
 
 // GAS 汎用 POST ヘルパー
 async function fetchJson(url, payload, signal) {
