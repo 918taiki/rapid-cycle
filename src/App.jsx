@@ -679,6 +679,7 @@ export default function RapidCycleApp() {
     setSwipeX(0);
     setAnimatingCards([]);
     setSessionTotal(0);
+    setTouchedDeckIds(new Set());
     sessionIdRef.current = genId();
     setView("study");
   };
@@ -719,6 +720,7 @@ export default function RapidCycleApp() {
     setSwipeX(0);
     setAnimatingCards([]);
     setSessionTotal(0);
+    setTouchedDeckIds(new Set());
     sessionIdRef.current = genId();
     setView("study");
   };
@@ -740,6 +742,17 @@ export default function RapidCycleApp() {
       };
     });
     setSessionTotal(prev => prev + 1);
+
+    // 学習した単語の所属デッキを記録（横断学習対応）
+    const deckId = wordToDeckMap.get(key);
+    if (deckId) {
+      setTouchedDeckIds(prev => {
+        if (prev.has(deckId)) return prev;
+        const next = new Set(prev);
+        next.add(deckId);
+        return next;
+      });
+    }
   };
 
   // Dismiss with trajectory based on swipe end position and velocity
