@@ -568,15 +568,38 @@ export default function RapidCycleApp() {
     runCloudRestore({ silent: true });
   }, [settings.gasUrl, decks.length, folders.length, stats, runCloudRestore]);
 
-  // Auto-backup when a study session finishes (debounced: at most once per 5 min)
+  // touchedDeckIds に含まれるデッキだけを差分同期
+  const syncTouchedDecks = useCallback(async () => {
+    if (!settings.gasUrl) return;
+    if (touchedDeckIds.size === 0) return;
+
+    if (cloudAbortRef.current) cloudAbortRef.current.abort();
+    const controller = new AbortController();
+    cloudAbortRef.current = controller;
+
+    try {
+      for (const deckId of touchedDeckIds) {
+        if (controller.signal.aborted) return;
+        const deck = decks.find(d => d.id === deckId);
+        if (!deck) continue;
+        await syncDeck(deck, controller.signal);
+      }
+    } catch (err) {
+      if (err && err.name === "AbortError") return;
+      console.warn("syncTouchedDecks failed", err);
+    }
+  }, [settings.gasUrl, touchedDeckIds, decks, syncDeck]);
+
+  // 学習終了時: 触れたデッキだけ差分同期（5分デバウンス）
   useEffect(() => {
     if (view !== "result") return;
     if (!settings.gasUrl) return;
+    if (touchedDeckIds.size === 0) return;
     const now = Date.now();
     if (now - lastAutoBackupAtRef.current < CLOUD_BACKUP_MIN_INTERVAL_MS) return;
     lastAutoBackupAtRef.current = now;
-    runCloudBackup({ silent: true });
-  }, [view, settings.gasUrl, runCloudBackup]);
+    syncTouchedDecks();
+  }, [view, settings.gasUrl, touchedDeckIds]);
 
   const currentCard = cards[currentIdx];
 
