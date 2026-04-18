@@ -641,6 +641,50 @@ export default function RapidCycleApp() {
     }
   }, [settings.gasUrl, touchedDeckIds, decks, syncDeck, addPendingDirtyDeck]);
 
+  // 保留中の操作をリトライする
+  const processPending = useCallback(async () => {
+    if (!settings.gasUrl) return;
+    const snapshot = {
+      deletedDeckIds: [...pending.deletedDeckIds],
+      metaDirty: pending.metaDirty,
+      dirtyDeckIds: [...pending.dirtyDeckIds],
+    };
+    const controller = new AbortController();
+    for (const deckId of snapshot.deletedDeckIds) {
+      try {
+        await deleteDeckFromCloud(deckId, controller.signal);
+        clearPendingDeletion(deckId);
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+        console.warn(`pending deleteDeck failed for ${deckId}`, err);
+      }
+    }
+    for (const deckId of snapshot.dirtyDeckIds) {
+      const deck = decksRef.current.find(d => d.id === deckId);
+      if (!deck) { clearPendingDirtyDeck(deckId); continue; }
+      try {
+        await syncDeck(deck, controller.signal);
+        clearPendingDirtyDeck(deckId);
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+        console.warn(`pending syncDeck failed for ${deckId}`, err);
+      }
+    }
+    if (snapshot.metaDirty) {
+      try {
+        await syncMeta(controller.signal);
+        clearMetaDirty();
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+        console.warn("pending syncMeta failed", err);
+      }
+    }
+  }, [settings.gasUrl, pending, deleteDeckFromCloud, syncDeck, syncMeta, clearPendingDeletion, clearPendingDirtyDeck, clearMetaDirty]);
+
+  const processPendingInBackground = useCallback(() => {
+    processPending().catch(err => console.warn("processPending error", err));
+  }, [processPending]);
+
   // 学習終了時: 触れたデッキだけ差分同期（5分デバウンス）
   useEffect(() => {
     if (view !== "result") return;
