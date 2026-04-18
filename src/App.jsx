@@ -447,6 +447,11 @@ export default function RapidCycleApp() {
   const [manualBackupPhase, setManualBackupPhase] = useState(null); // null | "checking" | "confirming" | "syncing" | "done" | "error"
   const [orphanSummaries, setOrphanSummaries] = useState([]);
   const orphanResolveRef = useRef(null);
+  const [restorePhase, setRestorePhase] = useState(null); // null | "checking" | "confirming" | "fetching" | "applying" | "done" | "error"
+  const [restoreCloudSummary, setRestoreCloudSummary] = useState(null);
+  const [restoreProgress, setRestoreProgress] = useState({ current: 0, total: 0, message: "" });
+  const [restoreError, setRestoreError] = useState("");
+  const restoreResolveRef = useRef(null);
   const autoRestoredRef = useRef(false);
   const cloudAbortRef = useRef(null); // クラウド通信の重複防止
   const lastAutoBackupAtRef = useRef(0);
@@ -510,6 +515,30 @@ export default function RapidCycleApp() {
     const localIds = new Set(decks.map(d => d.id));
     return cloudDeckIds.filter(id => !localIds.has(id));
   }, [decks]);
+
+  // クラウドの全体概要を取得
+  const fetchCloudSummary = useCallback(async (signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    const res = await fetchJson(url, { action: "getSummary" }, signal);
+    return res.summary;
+  }, [settings.gasUrl]);
+
+  // meta.json 取得
+  const fetchCloudMeta = useCallback(async (signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    const res = await fetchJson(url, { action: "getMeta" }, signal);
+    return res.data;
+  }, [settings.gasUrl]);
+
+  // デッキ1つ取得
+  const fetchCloudDeck = useCallback(async (deckId, signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    const res = await fetchJson(url, { action: "getDeck", deckId }, signal);
+    return res.data;
+  }, [settings.gasUrl]);
 
   // ─── PENDING HELPERS ───
   const addPendingDeletion = useCallback((deckId) => {
