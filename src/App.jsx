@@ -158,6 +158,21 @@ async function gasRestore(url, signal) {
   return parsed.data;
 }
 
+// GAS 汎用 POST ヘルパー
+async function fetchJson(url, payload, signal) {
+  const res = await fetch(url, {
+    method: "POST",
+    redirect: "follow",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify(payload),
+    signal,
+  });
+  const text = await res.text();
+  const parsed = extractJson(text);
+  if (!parsed || !parsed.ok) throw new Error(parsed?.error || "request failed");
+  return parsed;
+}
+
 // 記憶度スコアを計算（コンポーネント外のpure関数）
 function computeMemoryScore(stats, w) {
   const key = typeof w === "object" ? statsKey(w) : w;
@@ -458,6 +473,42 @@ export default function RapidCycleApp() {
   const autoRestoredRef = useRef(false);
   const cloudAbortRef = useRef(null); // クラウド通信の重複防止
   const lastAutoBackupAtRef = useRef(0);
+
+  // デッキ1つ分の送信ペイロードを組み立てる
+  const buildDeckPayload = useCallback((deck) => {
+    const deckStats = {};
+    for (const word of deck.words) {
+      const key = statsKey(word);
+      if (stats[key]) {
+        deckStats[key] = stats[key];
+      }
+    }
+    return { v: 2, deck: { ...deck }, stats: deckStats };
+  }, [stats]);
+
+  // 1つのデッキをクラウドに送信
+  const syncDeck = useCallback(async (deck, signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    return fetchJson(url, { action: "updateDeck", data: buildDeckPayload(deck) }, signal);
+  }, [settings.gasUrl, buildDeckPayload]);
+
+  // meta.json を更新
+  const syncMeta = useCallback(async (signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    return fetchJson(url, {
+      action: "updateMeta",
+      data: { v: 2, updatedAt: new Date().toISOString(), folders },
+    }, signal);
+  }, [settings.gasUrl, folders]);
+
+  // デッキファイルをクラウドから削除（P3で使用開始、P1では定義のみ）
+  const deleteDeckFromCloud = useCallback(async (deckId, signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    return fetchJson(url, { action: "deleteDeck", deckId }, signal);
+  }, [settings.gasUrl]);
 
   const runCloudBackup = useCallback(async (opts = {}) => {
     const url = settings.gasUrl;
