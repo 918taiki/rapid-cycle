@@ -1451,6 +1451,7 @@ export default function RapidCycleApp() {
             </button>
           </header>
 
+          <div style={s.scrollArea}>
           {/* Cross-study button */}
           {totalWords > 0 && (
             <button style={s.crossStudyBtn} onClick={() => { setActiveFolder(null); setView("crossSetup"); }}>
@@ -1537,6 +1538,7 @@ export default function RapidCycleApp() {
               </button>
             )}
           </div>
+          </div>{/* scrollArea */}
         </div>
       </div>
     );
@@ -1555,6 +1557,7 @@ export default function RapidCycleApp() {
             <h2 style={s.subTitle}>📁 {activeFolder.name}</h2>
           </header>
 
+          <div style={s.scrollArea}>
           {/* Folder cross-study */}
           {folderWords > 0 && (
             <button style={s.crossStudyBtn} onClick={() => { setView("crossSetup"); }}>
@@ -1592,8 +1595,9 @@ export default function RapidCycleApp() {
               })}
             </div>
           )}
+          </div>{/* scrollArea */}
 
-          <div style={{ marginTop: "auto", paddingTop: "24px" }}>
+          <div style={{ paddingTop: "12px", paddingBottom: "env(safe-area-inset-bottom, 12px)" }}>
             <button style={s.smallDangerBtn} onClick={() => setDeleteConfirm({ type: "folder", id: activeFolder.id, name: activeFolder.name })}>
               このフォルダを削除
             </button>
@@ -1659,6 +1663,7 @@ export default function RapidCycleApp() {
             <h2 style={s.subTitle}>横断学習</h2>
           </header>
 
+          <div style={s.scrollArea}>
           <p style={{ fontSize: "13px", color: t.textMuted, margin: "0 0 20px" }}>
             {sourceLabel}から{filteredCount}語が対象
           </p>
@@ -1701,6 +1706,7 @@ export default function RapidCycleApp() {
           >
             {crossCount === null ? filteredCount : Math.min(filteredCount, crossCount)}語で学習開始
           </button>
+          </div>{/* scrollArea */}
         </div>
       </div>
     );
@@ -1919,6 +1925,7 @@ export default function RapidCycleApp() {
           </div>
 
           {/* Word list */}
+          <div style={s.scrollArea}>
           <div style={s.wordList}>
             {filteredWords.length === 0 && (
               <p style={{ fontSize: "13px", color: t.textFaint, textAlign: "center", padding: "24px 0" }}>
@@ -2001,6 +2008,7 @@ export default function RapidCycleApp() {
               この単語帳を削除
             </button>
           </div>
+          </div>{/* scrollArea */}
 
           {/* Card preview modal */}
           {previewIdx !== null && words[previewIdx] && (() => {
@@ -2132,6 +2140,7 @@ export default function RapidCycleApp() {
             <h2 style={s.subTitle}>設定</h2>
           </header>
 
+          <div style={s.scrollArea}>
           <div style={s.settingsSection}>
             <p style={s.sectionLabel}>テーマ</p>
             <div style={{ display: "flex", gap: "8px" }}>
@@ -2325,11 +2334,12 @@ export default function RapidCycleApp() {
             </button>
           </div>
 
-          <div style={{ marginTop: "auto", paddingTop: "20px" }}>
+          <div style={{ paddingTop: "20px" }}>
             <button style={s.ghostBtn} onClick={() => setSettings(prev => ({ ...DEFAULT_SETTINGS, gasUrl: prev.gasUrl }))}>
               デフォルトに戻す
             </button>
           </div>
+          </div>{/* scrollArea */}
         </div>
 
         {/* Confirmation modal */}
@@ -2579,6 +2589,7 @@ export default function RapidCycleApp() {
             <h2 style={s.subTitle}>単語帳を追加</h2>
           </header>
 
+          <div style={s.scrollArea}>
           <div style={s.formGroup}>
             <label style={s.label}>単語帳の名前</label>
             <input
@@ -2638,6 +2649,7 @@ export default function RapidCycleApp() {
           >
             {preview.length}語を保存して開始
           </button>
+          </div>{/* scrollArea */}
         </div>
       </div>
     );
@@ -2895,22 +2907,27 @@ const mono = "'JetBrains Mono', 'SF Mono', monospace";
 
 function makeStyles(t) { return {
   shell: {
-    minHeight: "100vh",
-    minHeight: "100dvh",
+    height: "100dvh",
     background: t.bg,
     color: t.text,
     fontFamily: font,
     WebkitFontSmoothing: "antialiased",
-    overflowX: "hidden",
+    overflow: "hidden",
   },
   page: {
     maxWidth: "500px",
     margin: "0 auto",
-    padding: "20px 20px env(safe-area-inset-bottom, 20px)",
-    minHeight: "100vh",
-    minHeight: "100dvh",
+    padding: "0 20px",
+    height: "100%",
     display: "flex",
     flexDirection: "column",
+    overflow: "hidden",
+  },
+  scrollArea: {
+    flex: 1,
+    overflowY: "auto",
+    WebkitOverflowScrolling: "touch",
+    paddingBottom: "env(safe-area-inset-bottom, 20px)",
   },
 
   // ── Home ──
@@ -2973,7 +2990,6 @@ function makeStyles(t) { return {
     margin: "0 0 12px",
   },
   deckList: {
-    flex: 1,
   },
   deckCard: {
     display: "flex",
