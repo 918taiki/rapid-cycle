@@ -2667,13 +2667,13 @@ export default function RapidCycleApp() {
           `}</style>
 
           {/* Card stack */}
-          <div style={s.cardArea}
-            onTouchStart={onTouchStart}
-            onTouchMove={onTouchMove}
-            onTouchEnd={onTouchEnd}
-            onClick={handleTap}
-          >
-            <div style={s.stackContainer}>
+          <div style={s.cardArea}>
+            <div style={s.stackContainer}
+              onTouchStart={onTouchStart}
+              onTouchMove={onTouchMove}
+              onTouchEnd={onTouchEnd}
+              onClick={handleTap}
+            >
               {/* Background cards */}
               {stackCards.slice(1).reverse().map((card, reverseIdx) => {
                 const depth = stackCards.length - 1 - reverseIdx;
@@ -3634,17 +3634,18 @@ function makeStyles(t) { return {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    cursor: "pointer",
-    WebkitTapHighlightColor: "transparent",
     perspective: "1200px",
-    touchAction: "none",
   },
   stackContainer: {
     width: "100%",
+    height: "480px",
     position: "relative",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
+    cursor: "pointer",
+    WebkitTapHighlightColor: "transparent",
+    touchAction: "none",
   },
   stackCard: {
     position: "absolute",
