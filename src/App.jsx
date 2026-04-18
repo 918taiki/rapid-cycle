@@ -668,12 +668,13 @@ export default function RapidCycleApp() {
       const controller = new AbortController();
       syncDeck(latestDeck, controller.signal).catch(err => {
         if (err && err.name === "AbortError") return;
-        console.warn("scheduled syncDeck failed", err);
+        console.warn("scheduled syncDeck failed, adding to pending", err);
+        addPendingDirtyDeck(latestDeck.id);
       });
     }, 3000);
 
     deckSyncTimersRef.current.set(deck.id, tid);
-  }, [settings.gasUrl, syncDeck, scheduleTimeout]);
+  }, [settings.gasUrl, syncDeck, scheduleTimeout, addPendingDirtyDeck]);
 
   const currentCard = cards[currentIdx];
 
@@ -686,7 +687,8 @@ export default function RapidCycleApp() {
       const controller = new AbortController();
       syncDeck(newDeck, controller.signal).catch(err => {
         if (err && err.name === "AbortError") return;
-        console.warn("immediate syncDeck (new) failed", err);
+        console.warn("immediate syncDeck (new) failed, adding to pending", err);
+        addPendingDirtyDeck(newDeck.id);
       });
     }
     return newDeck;
@@ -776,7 +778,8 @@ export default function RapidCycleApp() {
         const controller = new AbortController();
         syncDeck({ ...targetDeck, folderId }, controller.signal).catch(err => {
           if (err && err.name === "AbortError") return;
-          console.warn("immediate syncDeck (folder move) failed", err);
+          console.warn("immediate syncDeck (folder move) failed, adding to pending", err);
+          addPendingDirtyDeck(deckId);
         });
       }
     }
