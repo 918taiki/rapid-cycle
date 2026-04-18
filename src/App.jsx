@@ -1544,7 +1544,9 @@ export default function RapidCycleApp() {
               </>
             )}
             <button style={{ ...s.fab, transform: showAddMenu ? "rotate(45deg)" : "none" }} onClick={() => setShowAddMenu(v => !v)}>
-              +
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                <path d="M11 4v14M4 11h14" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" />
+              </svg>
             </button>
           </div>
 
