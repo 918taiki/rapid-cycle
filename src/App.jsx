@@ -717,7 +717,8 @@ export default function RapidCycleApp() {
       scheduleTimeout(() => {
         syncMeta(controller.signal).catch(err => {
           if (err && err.name === "AbortError") return;
-          console.warn("immediate syncMeta (folder create) failed", err);
+          console.warn("immediate syncMeta (folder create) failed, marking pending", err);
+          markMetaDirty();
         });
       }, 0);
     }
@@ -733,12 +734,14 @@ export default function RapidCycleApp() {
       scheduleTimeout(() => {
         syncMeta(controller.signal).catch(err => {
           if (err && err.name === "AbortError") return;
-          console.warn("immediate syncMeta (folder delete) failed", err);
+          console.warn("immediate syncMeta (folder delete) failed, marking pending", err);
+          markMetaDirty();
         });
         for (const d of affectedDecks) {
           syncDeck({ ...d, folderId: null }, controller.signal).catch(err => {
             if (err && err.name === "AbortError") return;
-            console.warn("syncDeck (folder delete cascade) failed", err);
+            console.warn("syncDeck (folder delete cascade) failed, adding to pending", err);
+            addPendingDirtyDeck(d.id);
           });
         }
       }, 0);
