@@ -429,7 +429,7 @@ export default function RapidCycleApp() {
   const [newFolderName, setNewFolderName] = useState("");
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState({});
-  const [deleteConfirm, setDeleteConfirm] = useState(null); // { type: "deck"|"folder"|"word"|"stats"|"restore", id?, idx?, name }
+  const [deleteConfirm, setDeleteConfirm] = useState(null); // { type: "deck"|"folder"|"word"|"stats", id?, idx?, name }
   const [backupStatus, setBackupStatus] = useState("");
 
   // pending リスト（P3で本格的に使用。P1ではstate定義のみ）
@@ -1049,8 +1049,6 @@ export default function RapidCycleApp() {
       scheduleDeckSync({ ...activeDeck, words });
     } else if (deleteConfirm.type === "stats") {
       setStats({});
-    } else if (deleteConfirm.type === "restore") {
-      runCloudRestore();
     }
     setDeleteConfirm(null);
   };
@@ -1556,7 +1554,6 @@ export default function RapidCycleApp() {
               folder:  { title: "フォルダを削除",     desc: `「${deleteConfirm.name}」を削除しますか？中の単語帳は削除されず、フォルダ外に移動されます。`, confirm: "削除する" },
               word:    { title: "単語を削除",         desc: `「${deleteConfirm.name}」を削除しますか？`, confirm: "削除する" },
               stats:   { title: "学習記録をリセット", desc: "全ての学習記録をリセットしますか？単語帳は残ります。", confirm: "リセットする" },
-              restore: { title: "クラウドから復元",   desc: "クラウドのデータで現在のデータを上書きしますか？", confirm: "復元する" },
             };
             const label = labels[deleteConfirm.type] || labels.deck;
             return (
@@ -2029,7 +2026,6 @@ export default function RapidCycleApp() {
               folder:  { title: "フォルダを削除",     desc: `「${deleteConfirm.name}」を削除しますか？中の単語帳は削除されず、フォルダ外に移動されます。`, confirm: "削除する" },
               word:    { title: "単語を削除",         desc: `「${deleteConfirm.name}」を削除しますか？`, confirm: "削除する" },
               stats:   { title: "学習記録をリセット", desc: "全ての学習記録をリセットしますか？単語帳は残ります。", confirm: "リセットする" },
-              restore: { title: "クラウドから復元",   desc: "クラウドのデータで現在のデータを上書きしますか？", confirm: "復元する" },
             };
             const label = labels[deleteConfirm.type] || labels.deck;
             return (
@@ -2181,10 +2177,15 @@ export default function RapidCycleApp() {
                 </button>
                 <button
                   style={{ ...s.ghostBtn, flex: 1, padding: "10px", fontSize: "13px", opacity: settings.gasUrl ? 1 : 0.5 }}
-                  disabled={!settings.gasUrl || cloudStatus === "saving" || cloudStatus === "restoring"}
-                  onClick={() => setDeleteConfirm({ type: "restore", name: "クラウドデータで上書き" })}
+                  disabled={!settings.gasUrl || restorePhase !== null || manualBackupPhase !== null}
+                  onClick={() => runCloudRestore()}
                 >
-                  {cloudStatus === "restoring" ? "復元中..." : cloudStatus === "restored" ? "✓ 復元完了" : "復元する"}
+                  {restorePhase === "checking" && "確認中..."}
+                  {restorePhase === "fetching" && "取得中..."}
+                  {restorePhase === "applying" && "適用中..."}
+                  {restorePhase === "done" && "✓ 復元完了"}
+                  {restorePhase === "error" && "エラー"}
+                  {(restorePhase === null || restorePhase === "confirming") && "復元する"}
                 </button>
               </div>
               {cloudStatus === "error" && (
