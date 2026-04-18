@@ -368,6 +368,13 @@ export default function RapidCycleApp() {
   const animIdRef = useRef(0);
   const sessionIdRef = useRef("");
 
+  // デバウンス発火時に最新 decks を参照するための Ref
+  const decksRef = useRef(decks);
+  useEffect(() => { decksRef.current = decks; }, [decks]);
+
+  // デッキごとの編集デバウンスタイマー
+  const deckSyncTimersRef = useRef(new Map());
+
   // タイマー/RAFのクリーンアップ管理
   const timersRef = useRef(new Set());
   const rafsRef = useRef(new Set());
@@ -600,6 +607,30 @@ export default function RapidCycleApp() {
     lastAutoBackupAtRef.current = now;
     syncTouchedDecks();
   }, [view, settings.gasUrl, touchedDeckIds]);
+
+  // 指定デッキの同期を3秒後にスケジュール。連続呼び出しはタイマーリセット
+  const scheduleDeckSync = useCallback((deck) => {
+    if (!settings.gasUrl) return;
+
+    const existing = deckSyncTimersRef.current.get(deck.id);
+    if (existing !== undefined) {
+      clearTimeout(existing);
+      deckSyncTimersRef.current.delete(deck.id);
+    }
+
+    const tid = scheduleTimeout(() => {
+      deckSyncTimersRef.current.delete(deck.id);
+      const latestDeck = decksRef.current.find(d => d.id === deck.id);
+      if (!latestDeck) return;
+      const controller = new AbortController();
+      syncDeck(latestDeck, controller.signal).catch(err => {
+        if (err && err.name === "AbortError") return;
+        console.warn("scheduled syncDeck failed", err);
+      });
+    }, 3000);
+
+    deckSyncTimersRef.current.set(deck.id, tid);
+  }, [settings.gasUrl, syncDeck, scheduleTimeout]);
 
   const currentCard = cards[currentIdx];
 
