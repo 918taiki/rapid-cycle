@@ -554,18 +554,31 @@ export default function RapidCycleApp() {
 
     if (opts.silent !== true) setCloudStatus("restoring");
     try {
-      const data = await gasRestore(url, controller.signal);
-      if (!data) {
-        if (opts.silent !== true) {
-          setCloudStatus("error");
-          scheduleTimeout(() => setCloudStatus(""), 3000);
+      // 1. meta.json 取得
+      const metaRes = await fetchJson(url, { action: "getMeta" }, controller.signal);
+      const meta = metaRes.data;
+
+      // 2. デッキ一覧取得
+      const listRes = await fetchJson(url, { action: "listDecks" }, controller.signal);
+      const deckIds = listRes.deckIds || [];
+
+      // 3. 各デッキを順次取得
+      const fetchedDecks = [];
+      const fetchedStats = {};
+      for (const deckId of deckIds) {
+        if (controller.signal.aborted) return false;
+        const deckRes = await fetchJson(url, { action: "getDeck", deckId }, controller.signal);
+        if (deckRes.data) {
+          fetchedDecks.push(deckRes.data.deck);
+          Object.assign(fetchedStats, deckRes.data.stats);
         }
-        return false;
       }
-      if (data.decks) setDecks(data.decks);
-      if (data.stats) setStats(data.stats);
-      if (data.folders) setFolders(data.folders);
-      if (data.settings) setSettings(prev => ({ ...prev, ...data.settings, gasUrl: prev.gasUrl }));
+
+      // 4. ローカル上書き（P1では単純適用。P5でトランザクション化）
+      setDecks(fetchedDecks);
+      setStats(fetchedStats);
+      if (meta && meta.folders) setFolders(meta.folders);
+
       if (opts.silent !== true) {
         setCloudStatus("restored");
         scheduleTimeout(() => setCloudStatus(""), 3000);
