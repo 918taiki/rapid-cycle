@@ -447,6 +447,7 @@ export default function RapidCycleApp() {
   const autoRestoredRef = useRef(false);
   const cloudAbortRef = useRef(null); // クラウド通信の重複防止
   const lastAutoBackupAtRef = useRef(0);
+  const processPendingInBackgroundRef = useRef(() => {});
 
   // デッキ1つ分の送信ペイロードを組み立てる
   const buildDeckPayload = useCallback((deck) => {
@@ -548,6 +549,7 @@ export default function RapidCycleApp() {
         setCloudStatus("saved");
         scheduleTimeout(() => setCloudStatus(""), 3000);
       }
+      processPendingInBackgroundRef.current();
       return true;
     } catch (err) {
       if (err && err.name === "AbortError") return false;
@@ -618,29 +620,6 @@ export default function RapidCycleApp() {
     runCloudRestore({ silent: true });
   }, [settings.gasUrl, decks.length, folders.length, stats, runCloudRestore]);
 
-  // touchedDeckIds に含まれるデッキだけを差分同期
-  const syncTouchedDecks = useCallback(async () => {
-    if (!settings.gasUrl) return;
-    if (touchedDeckIds.size === 0) return;
-
-    if (cloudAbortRef.current) cloudAbortRef.current.abort();
-    const controller = new AbortController();
-    cloudAbortRef.current = controller;
-
-    for (const deckId of touchedDeckIds) {
-      if (controller.signal.aborted) return;
-      const deck = decks.find(d => d.id === deckId);
-      if (!deck) continue;
-      try {
-        await syncDeck(deck, controller.signal);
-      } catch (err) {
-        if (err && err.name === "AbortError") return;
-        console.warn(`syncDeck failed for ${deckId}, adding to pending`, err);
-        addPendingDirtyDeck(deckId);
-      }
-    }
-  }, [settings.gasUrl, touchedDeckIds, decks, syncDeck, addPendingDirtyDeck]);
-
   // 保留中の操作をリトライする
   const processPending = useCallback(async () => {
     if (!settings.gasUrl) return;
@@ -684,6 +663,37 @@ export default function RapidCycleApp() {
   const processPendingInBackground = useCallback(() => {
     processPending().catch(err => console.warn("processPending error", err));
   }, [processPending]);
+  processPendingInBackgroundRef.current = processPendingInBackground;
+
+  // touchedDeckIds に含まれるデッキだけを差分同期
+  const syncTouchedDecks = useCallback(async () => {
+    if (!settings.gasUrl) return;
+    if (touchedDeckIds.size === 0) return;
+
+    if (cloudAbortRef.current) cloudAbortRef.current.abort();
+    const controller = new AbortController();
+    cloudAbortRef.current = controller;
+
+    for (const deckId of touchedDeckIds) {
+      if (controller.signal.aborted) return;
+      const deck = decks.find(d => d.id === deckId);
+      if (!deck) continue;
+      try {
+        await syncDeck(deck, controller.signal);
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+        console.warn(`syncDeck failed for ${deckId}, adding to pending`, err);
+        addPendingDirtyDeck(deckId);
+      }
+    }
+    processPendingInBackground();
+  }, [settings.gasUrl, touchedDeckIds, decks, syncDeck, addPendingDirtyDeck, processPendingInBackground]);
+
+  // 起動時: 保留中の操作をリトライ
+  useEffect(() => {
+    scheduleTimeout(() => processPendingInBackgroundRef.current(), 1000);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 学習終了時: 触れたデッキだけ差分同期（5分デバウンス）
   useEffect(() => {
