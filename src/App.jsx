@@ -5,6 +5,7 @@ const STORAGE_KEY_DECKS = "rc_decks";
 const STORAGE_KEY_STATS = "rc_stats";
 const STORAGE_KEY_SETTINGS = "rc_settings";
 const STORAGE_KEY_FOLDERS = "rc_folders";
+const STORAGE_KEY_MIGRATED = "rc_migrated_v1";
 const SWIPE_THRESHOLD = 60;
 const CLOUD_BACKUP_MIN_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -232,7 +233,11 @@ export default function RapidCycleApp() {
   const [stats, setStats] = useState(() => loadFromStorage(STORAGE_KEY_STATS, {}));
 
   // Migration: add IDs to words that don't have them, and migrate stats keys
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
+    // 冪等性のため: フラグが立っていたらスキップ（初回マウントのみ実行）
+    if (loadFromStorage(STORAGE_KEY_MIGRATED, false)) return;
+
     let needsDeckUpdate = false;
     const newDecks = decks.map(deck => {
       const newWords = deck.words.map(w => {
@@ -255,7 +260,9 @@ export default function RapidCycleApp() {
       setDecks(newDecks);
       setStats(newStats);
     }
-  }, []); // Run once on mount
+
+    saveToStorage(STORAGE_KEY_MIGRATED, true);
+  }, []); // 意図的に空（初回マウントのみ、フラグで冪等性を保証）
   const [settings, setSettings] = useState(() => loadFromStorage(STORAGE_KEY_SETTINGS, DEFAULT_SETTINGS));
   const t = THEMES[settings.theme || "dark"];
   const s = useMemo(() => makeStyles(t), [t]);
