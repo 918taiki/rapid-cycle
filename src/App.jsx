@@ -8,6 +8,13 @@ const STORAGE_KEY_FOLDERS = "rc_folders";
 const STORAGE_KEY_MIGRATED = "rc_migrated_v1";
 const SWIPE_THRESHOLD = 60;
 const CLOUD_BACKUP_MIN_INTERVAL_MS = 5 * 60 * 1000;
+const STORAGE_KEY_PENDING = "rc_pending";
+
+const DEFAULT_PENDING = {
+  deletedDeckIds: [],
+  metaDirty: false,
+  dirtyDeckIds: [],
+};
 
 const DEFAULT_SETTINGS = {
   reappearR1: 0.33,
@@ -338,6 +345,20 @@ export default function RapidCycleApp() {
   const [activeFolder, setActiveFolder] = useState(null);
   const [studySourceLabel, setStudySourceLabel] = useState("");
 
+  // 単語→所属デッキIDの逆引きマップ（decks変更時のみ再構築）
+  const wordToDeckMap = useMemo(() => {
+    const m = new Map();
+    for (const d of decks) {
+      for (const w of d.words) {
+        m.set(statsKey(w), d.id);
+      }
+    }
+    return m;
+  }, [decks]);
+
+  // 学習セッションで触れたデッキIDの集合（P2で使用開始、P1では初期化のみ）
+  const [touchedDeckIds, setTouchedDeckIds] = useState(() => new Set());
+
   // activeDeck内の単語についてスコアを事前計算
   const memoryScoresMap = useMemo(() => {
     if (!activeDeck) return new Map();
@@ -422,11 +443,15 @@ export default function RapidCycleApp() {
   const [deleteConfirm, setDeleteConfirm] = useState(null); // { type: "deck"|"folder"|"word"|"stats"|"restore", id?, idx?, name }
   const [backupStatus, setBackupStatus] = useState("");
 
+  // pending リスト（P3で本格的に使用。P1ではstate定義のみ）
+  const [pending, setPending] = useState(() => loadFromStorage(STORAGE_KEY_PENDING, DEFAULT_PENDING));
+
   // Persist
   useEffect(() => { saveToStorage(STORAGE_KEY_DECKS, decks); }, [decks]);
   useEffect(() => { saveToStorage(STORAGE_KEY_STATS, stats); }, [stats]);
   useEffect(() => { saveToStorage(STORAGE_KEY_SETTINGS, settings); }, [settings]);
   useEffect(() => { saveToStorage(STORAGE_KEY_FOLDERS, folders); }, [folders]);
+  useEffect(() => { saveToStorage(STORAGE_KEY_PENDING, pending); }, [pending]);
 
   // Cloud backup/restore
   const [cloudStatus, setCloudStatus] = useState(""); // "" | "saving" | "saved" | "restoring" | "restored" | "error"
