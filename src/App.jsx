@@ -429,6 +429,7 @@ export default function RapidCycleApp() {
   const [crossCount, setCrossCount] = useState(null); // null = 全部
   const [newFolderName, setNewFolderName] = useState("");
   const [showNewFolder, setShowNewFolder] = useState(false);
+  const [showAddMenu, setShowAddMenu] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState({});
   const [deleteConfirm, setDeleteConfirm] = useState(null); // { type: "deck"|"folder"|"word"|"stats", id?, idx?, name }
   const [backupStatus, setBackupStatus] = useState("");
@@ -1451,9 +1452,7 @@ export default function RapidCycleApp() {
             </button>
           </header>
 
-          <div style={s.scrollWrapper}>
-          <div style={s.scrollArea}>
-          {/* Cross-study button */}
+          {/* Cross-study button (fixed, outside scroll area) */}
           {totalWords > 0 && (
             <button style={s.crossStudyBtn} onClick={() => { setActiveFolder(null); setView("crossSetup"); }}>
               <span style={{ fontSize: "16px" }}>🔀</span>
@@ -1464,6 +1463,9 @@ export default function RapidCycleApp() {
             </button>
           )}
 
+          <div style={s.scrollWrapper}>
+          <div style={s.scrollArea}>
+          <div style={{ minHeight: "calc(100% + 1px)" }}>
           {decks.length === 0 ? (
             <div style={s.emptyState}>
               <div style={s.emptyIcon}>📚</div>
@@ -1510,26 +1512,8 @@ export default function RapidCycleApp() {
             </div>
           )}
 
-          <div style={s.homeActions}>
-            <button style={s.primaryBtn} onClick={() => setView("import")}>
-              + 単語帳を追加
-            </button>
-            <div style={{ display: "flex", gap: "8px" }}>
-              {showNewFolder ? (
-                <div style={{ display: "flex", gap: "6px", flex: 1 }}>
-                  <input style={{ ...s.input, flex: 1, padding: "10px 12px", fontSize: "13px" }} value={newFolderName} onChange={e => setNewFolderName(e.target.value)} placeholder="フォルダ名" autoFocus />
-                  <button style={{ ...s.editSaveBtn, padding: "10px 16px" }} onClick={() => {
-                    if (newFolderName.trim()) { createFolder(newFolderName.trim()); setNewFolderName(""); setShowNewFolder(false); }
-                  }}>作成</button>
-                  <button style={{ ...s.editCancelBtn, padding: "10px 12px" }} onClick={() => { setShowNewFolder(false); setNewFolderName(""); }}>✕</button>
-                </div>
-              ) : (
-                <button style={{ ...s.ghostBtn, flex: 1 }} onClick={() => setShowNewFolder(true)}>
-                  + フォルダを作成
-                </button>
-              )}
-            </div>
-            {decks.length === 0 && (
+          {decks.length === 0 && (
+            <div style={{ marginTop: "20px" }}>
               <button style={s.ghostBtn} onClick={() => {
                 const deck = saveDeck("TOEIC頻出サンプル", SAMPLE_WORDS);
                 setActiveDeck(deck);
@@ -1537,11 +1521,50 @@ export default function RapidCycleApp() {
               }}>
                 サンプルで試す
               </button>
-            )}
+            </div>
+          )}
           </div>
           </div>
           <div style={s.scrollFade} />
           </div>{/* scrollWrapper */}
+
+          {/* FAB */}
+          <div style={s.fabContainer}>
+            {showAddMenu && (
+              <>
+                <div style={s.fabBackdrop} onClick={() => setShowAddMenu(false)} />
+                <div style={s.fabMenu}>
+                  <button style={s.fabMenuItem} onClick={() => { setShowAddMenu(false); setView("import"); }}>
+                    <span style={{ fontSize: "16px" }}>📚</span> 単語帳を追加
+                  </button>
+                  <button style={s.fabMenuItem} onClick={() => { setShowAddMenu(false); setShowNewFolder(true); }}>
+                    <span style={{ fontSize: "16px" }}>📁</span> フォルダを作成
+                  </button>
+                </div>
+              </>
+            )}
+            <button style={{ ...s.fab, transform: showAddMenu ? "rotate(45deg)" : "none" }} onClick={() => setShowAddMenu(v => !v)}>
+              +
+            </button>
+          </div>
+
+          {/* Folder create modal */}
+          {showNewFolder && (
+            <div style={s.modalOverlay} onClick={() => { setShowNewFolder(false); setNewFolderName(""); }}>
+              <div style={s.modalCard} onClick={e => e.stopPropagation()}>
+                <p style={{ fontSize: "14px", fontWeight: "600", color: t.text, marginBottom: "12px" }}>新しいフォルダ</p>
+                <input style={{ ...s.input, marginBottom: "12px" }} value={newFolderName} onChange={e => setNewFolderName(e.target.value)} placeholder="フォルダ名" autoFocus onKeyDown={e => {
+                  if (e.key === "Enter" && newFolderName.trim()) { createFolder(newFolderName.trim()); setNewFolderName(""); setShowNewFolder(false); }
+                }} />
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button style={{ ...s.editCancelBtn, flex: 1 }} onClick={() => { setShowNewFolder(false); setNewFolderName(""); }}>キャンセル</button>
+                  <button style={{ ...s.editSaveBtn, flex: 1 }} onClick={() => {
+                    if (newFolderName.trim()) { createFolder(newFolderName.trim()); setNewFolderName(""); setShowNewFolder(false); }
+                  }}>作成</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -2940,6 +2963,7 @@ function makeStyles(t) { return {
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
+    position: "relative",
   },
   scrollWrapper: {
     position: "relative",
@@ -2951,6 +2975,7 @@ function makeStyles(t) { return {
     height: "100%",
     overflowY: "auto",
     WebkitOverflowScrolling: "touch",
+    paddingTop: "16px",
     paddingBottom: "env(safe-area-inset-bottom, 20px)",
   },
   scrollFade: {
@@ -3144,6 +3169,83 @@ function makeStyles(t) { return {
     flexDirection: "column",
     gap: "10px",
   },
+  fabContainer: {
+    position: "absolute",
+    left: "20px",
+    bottom: "calc(env(safe-area-inset-bottom, 12px) + 16px)",
+    zIndex: 10,
+  },
+  fab: {
+    width: "52px",
+    height: "52px",
+    borderRadius: "50%",
+    background: "linear-gradient(135deg, #a855f7, #7c3aed)",
+    border: "none",
+    color: "#fff",
+    fontSize: "28px",
+    fontWeight: "300",
+    lineHeight: "1",
+    cursor: "pointer",
+    boxShadow: "0 4px 16px rgba(124, 58, 237, 0.5)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    transition: "transform 0.2s",
+    WebkitTapHighlightColor: "transparent",
+    position: "relative",
+    zIndex: 2,
+  },
+  fabBackdrop: {
+    position: "fixed",
+    inset: 0,
+    background: "transparent",
+    zIndex: 1,
+  },
+  fabMenu: {
+    position: "absolute",
+    left: 0,
+    bottom: "60px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+    zIndex: 2,
+  },
+  fabMenuItem: {
+    padding: "12px 16px",
+    background: t.surface,
+    border: `1px solid ${t.borderLight}`,
+    borderRadius: "12px",
+    color: t.text,
+    fontSize: "14px",
+    fontWeight: "500",
+    cursor: "pointer",
+    fontFamily: font,
+    textAlign: "left",
+    whiteSpace: "nowrap",
+    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    WebkitTapHighlightColor: "transparent",
+  },
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0, 0, 0, 0.6)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "20px",
+    zIndex: 100,
+  },
+  modalCard: {
+    width: "100%",
+    maxWidth: "320px",
+    background: t.surface,
+    border: `1px solid ${t.borderLight}`,
+    borderRadius: "16px",
+    padding: "20px",
+  },
   primaryBtn: {
     padding: "16px",
     background: "linear-gradient(135deg, #a855f7, #7c3aed)",
@@ -3237,7 +3339,7 @@ function makeStyles(t) { return {
   filterRow: {
     display: "flex",
     gap: "6px",
-    marginBottom: "14px",
+    marginBottom: "4px",
     overflowX: "auto",
     WebkitOverflowScrolling: "touch",
     paddingBottom: "4px",
