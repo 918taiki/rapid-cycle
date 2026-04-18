@@ -639,6 +639,13 @@ export default function RapidCycleApp() {
     const id = Date.now().toString(36);
     const newDeck = { id, name, words, createdAt: Date.now(), folderId };
     setDecks(prev => [newDeck, ...prev]);
+    if (settings.gasUrl) {
+      const controller = new AbortController();
+      syncDeck(newDeck, controller.signal).catch(err => {
+        if (err && err.name === "AbortError") return;
+        console.warn("immediate syncDeck (new) failed", err);
+      });
+    }
     return newDeck;
   };
 
@@ -686,6 +693,16 @@ export default function RapidCycleApp() {
 
   const moveDeckToFolder = (deckId, folderId) => {
     setDecks(prev => prev.map(d => d.id === deckId ? { ...d, folderId } : d));
+    if (settings.gasUrl) {
+      const targetDeck = decks.find(d => d.id === deckId);
+      if (targetDeck) {
+        const controller = new AbortController();
+        syncDeck({ ...targetDeck, folderId }, controller.signal).catch(err => {
+          if (err && err.name === "AbortError") return;
+          console.warn("immediate syncDeck (folder move) failed", err);
+        });
+      }
+    }
   };
 
   const getDecksInFolder = (folderId) => decks.filter(d => d.folderId === folderId);
