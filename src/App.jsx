@@ -595,6 +595,7 @@ export default function RapidCycleApp() {
       setDecks(fetchedDecks);
       setStats(fetchedStats);
       if (meta && meta.folders) setFolders(meta.folders);
+      setPending(DEFAULT_PENDING);
 
       if (opts.silent !== true) {
         setCloudStatus("restored");
