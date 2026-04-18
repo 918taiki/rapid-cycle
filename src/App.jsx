@@ -5,7 +5,16 @@ const STORAGE_KEY_DECKS = "rc_decks";
 const STORAGE_KEY_STATS = "rc_stats";
 const STORAGE_KEY_SETTINGS = "rc_settings";
 const STORAGE_KEY_FOLDERS = "rc_folders";
+const STORAGE_KEY_MIGRATED = "rc_migrated_v1";
 const SWIPE_THRESHOLD = 60;
+const CLOUD_BACKUP_MIN_INTERVAL_MS = 5 * 60 * 1000;
+const STORAGE_KEY_PENDING = "rc_pending";
+
+const DEFAULT_PENDING = {
+  deletedDeckIds: [],
+  metaDirty: false,
+  dirtyDeckIds: [],
+};
 
 const DEFAULT_SETTINGS = {
   reappearR1: 0.33,
@@ -113,38 +122,87 @@ function extractJson(text) {
   return null;
 }
 
-async function gasBackup(url, payload) {
-  if (!url) throw new Error("no url");
-  const body = JSON.stringify(payload);
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      redirect: "follow",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body,
-    });
-    const text = await res.text();
-    const parsed = extractJson(text);
-    if (parsed && parsed.ok) return parsed;
-    throw new Error("post failed");
-  } catch {
-    // Fallback: GET with data param (URL length permitting)
-    const getUrl = url + (url.includes("?") ? "&" : "?") + "data=" + encodeURIComponent(body);
-    const res = await fetch(getUrl, { method: "GET", redirect: "follow" });
-    const text = await res.text();
-    const parsed = extractJson(text);
-    if (parsed && parsed.ok) return parsed;
-    throw new Error("backup failed");
-  }
-}
 
-async function gasRestore(url) {
-  if (!url) throw new Error("no url");
-  const res = await fetch(url, { method: "GET", redirect: "follow" });
+// GAS 汎用 POST ヘルパー
+async function fetchJson(url, payload, signal) {
+  const res = await fetch(url, {
+    method: "POST",
+    redirect: "follow",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify(payload),
+    signal,
+  });
   const text = await res.text();
   const parsed = extractJson(text);
-  if (!parsed || !parsed.ok) throw new Error("restore failed");
-  return parsed.data;
+  if (!parsed || !parsed.ok) throw new Error(parsed?.error || "request failed");
+  return parsed;
+}
+
+// 記憶度スコアを計算（コンポーネント外のpure関数）
+function computeMemoryScore(stats, w) {
+  const key = typeof w === "object" ? statsKey(w) : w;
+  const st = stats[key];
+  if (!st || !st.log || st.log.length === 0) return 0;
+  const log = st.log.slice(-100);
+
+  const getIntervalDecay = (hours) => {
+    if (hours < 1) return 0.6;
+    if (hours < 3) return 0.7;
+    if (hours < 6) return 0.8;
+    if (hours < 12) return 0.9;
+    if (hours < 24) return 0.95;
+    return 1.0;
+  };
+
+  let prevSessionEndTime = null;
+  let currentSid = null;
+  let currentTimeDecay = 1.0;
+  const timeDecays = new Array(log.length);
+
+  for (let i = 0; i < log.length; i++) {
+    const entry = log[i];
+    const entryTime = new Date(entry.date).getTime();
+    const sid = entry.sid || `legacy_${i}`;
+
+    if (sid !== currentSid) {
+      if (currentSid !== null) {
+        prevSessionEndTime = new Date(log[i - 1].date).getTime();
+      }
+      if (prevSessionEndTime !== null) {
+        const gapHours = (entryTime - prevSessionEndTime) / 3600000;
+        currentTimeDecay = getIntervalDecay(gapHours);
+      } else {
+        currentTimeDecay = 1.0;
+      }
+      currentSid = sid;
+    }
+    timeDecays[i] = currentTimeDecay;
+  }
+
+  let accuracySum = 0;
+  let peekSum = 0;
+  let totalWeight = 0.5;
+
+  for (let i = 0; i < log.length; i++) {
+    const entry = log[i];
+    const rd = entry.round || 1;
+    const roundDecay = 1 / rd;
+    const timeDecay = timeDecays[i];
+    const weight = roundDecay * timeDecay;
+
+    totalWeight += weight;
+    if (entry.correct) {
+      accuracySum += weight;
+      if (!entry.peeked) {
+        peekSum += weight;
+      }
+    }
+  }
+
+  if (totalWeight === 0) return 0;
+  const accuracy = accuracySum / totalWeight;
+  const peekRatio = peekSum / totalWeight;
+  return accuracy * 0.6 + peekRatio * 0.4;
 }
 
 function parseCSV(text) {
@@ -229,7 +287,11 @@ export default function RapidCycleApp() {
   const [stats, setStats] = useState(() => loadFromStorage(STORAGE_KEY_STATS, {}));
 
   // Migration: add IDs to words that don't have them, and migrate stats keys
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
+    // 冪等性のため: フラグが立っていたらスキップ（初回マウントのみ実行）
+    if (loadFromStorage(STORAGE_KEY_MIGRATED, false)) return;
+
     let needsDeckUpdate = false;
     const newDecks = decks.map(deck => {
       const newWords = deck.words.map(w => {
@@ -252,7 +314,9 @@ export default function RapidCycleApp() {
       setDecks(newDecks);
       setStats(newStats);
     }
-  }, []); // Run once on mount
+
+    saveToStorage(STORAGE_KEY_MIGRATED, true);
+  }, []); // 意図的に空（初回マウントのみ、フラグで冪等性を保証）
   const [settings, setSettings] = useState(() => loadFromStorage(STORAGE_KEY_SETTINGS, DEFAULT_SETTINGS));
   const t = THEMES[settings.theme || "dark"];
   const s = useMemo(() => makeStyles(t), [t]);
@@ -260,6 +324,30 @@ export default function RapidCycleApp() {
   const [activeDeck, setActiveDeck] = useState(null);
   const [activeFolder, setActiveFolder] = useState(null);
   const [studySourceLabel, setStudySourceLabel] = useState("");
+
+  // 単語→所属デッキIDの逆引きマップ（decks変更時のみ再構築）
+  const wordToDeckMap = useMemo(() => {
+    const m = new Map();
+    for (const d of decks) {
+      for (const w of d.words) {
+        m.set(statsKey(w), d.id);
+      }
+    }
+    return m;
+  }, [decks]);
+
+  // 学習セッションで触れたデッキIDの集合（P2で使用開始、P1では初期化のみ）
+  const [touchedDeckIds, setTouchedDeckIds] = useState(() => new Set());
+
+  // activeDeck内の単語についてスコアを事前計算
+  const memoryScoresMap = useMemo(() => {
+    if (!activeDeck) return new Map();
+    const m = new Map();
+    for (const w of activeDeck.words) {
+      m.set(statsKey(w), computeMemoryScore(stats, w));
+    }
+    return m;
+  }, [activeDeck, stats]);
 
   // Study state
   const [cards, setCards] = useState([]);
@@ -280,6 +368,47 @@ export default function RapidCycleApp() {
   const animIdRef = useRef(0);
   const sessionIdRef = useRef("");
 
+  // デバウンス発火時に最新 decks を参照するための Ref
+  const decksRef = useRef(decks);
+  useEffect(() => { decksRef.current = decks; }, [decks]);
+
+  // デッキごとの編集デバウンスタイマー
+  const deckSyncTimersRef = useRef(new Map());
+
+  // タイマー/RAFのクリーンアップ管理
+  const timersRef = useRef(new Set());
+  const rafsRef = useRef(new Set());
+
+  const scheduleTimeout = useCallback((fn, delay) => {
+    const id = setTimeout(() => {
+      timersRef.current.delete(id);
+      fn();
+    }, delay);
+    timersRef.current.add(id);
+    return id;
+  }, []);
+
+  const scheduleRAF = useCallback((fn) => {
+    const id = requestAnimationFrame(() => {
+      rafsRef.current.delete(id);
+      fn();
+    });
+    rafsRef.current.add(id);
+    return id;
+  }, []);
+
+  // アンマウント時に全タイマー/RAFをクリーンアップ
+  useEffect(() => {
+    return () => {
+      timersRef.current.forEach(clearTimeout);
+      timersRef.current.clear();
+      rafsRef.current.forEach(cancelAnimationFrame);
+      rafsRef.current.clear();
+      for (const tid of deckSyncTimersRef.current.values()) clearTimeout(tid);
+      deckSyncTimersRef.current.clear();
+    };
+  }, []);
+
   // Import state
   const [importText, setImportText] = useState("");
   const [deckName, setDeckName] = useState("");
@@ -289,6 +418,7 @@ export default function RapidCycleApp() {
   const [editingIdx, setEditingIdx] = useState(null);
   const [editForm, setEditForm] = useState({ word: "", meaning: "", example_en: "", example_ja: "", note: "" });
   const [detailFilter, setDetailFilter] = useState("all");
+  const [detailCount, setDetailCount] = useState(null); // null = 全部
   const [isRenamingDeck, setIsRenamingDeck] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [showQuitModal, setShowQuitModal] = useState(false);
@@ -296,74 +426,426 @@ export default function RapidCycleApp() {
   const [previewFlipped, setPreviewFlipped] = useState(false);
   const [exportCopied, setExportCopied] = useState(false);
   const [crossFilter, setCrossFilter] = useState("all");
-  const [crossCount, setCrossCount] = useState(50);
+  const [crossCount, setCrossCount] = useState(null); // null = 全部
   const [newFolderName, setNewFolderName] = useState("");
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState({});
-  const [deleteConfirm, setDeleteConfirm] = useState(null); // { type: "deck"|"folder", id, name }
+  const [deleteConfirm, setDeleteConfirm] = useState(null); // { type: "deck"|"folder"|"word"|"stats", id?, idx?, name }
   const [backupStatus, setBackupStatus] = useState("");
+
+  // pending リスト（P3で本格的に使用。P1ではstate定義のみ）
+  const [pending, setPending] = useState(() => loadFromStorage(STORAGE_KEY_PENDING, DEFAULT_PENDING));
 
   // Persist
   useEffect(() => { saveToStorage(STORAGE_KEY_DECKS, decks); }, [decks]);
   useEffect(() => { saveToStorage(STORAGE_KEY_STATS, stats); }, [stats]);
   useEffect(() => { saveToStorage(STORAGE_KEY_SETTINGS, settings); }, [settings]);
   useEffect(() => { saveToStorage(STORAGE_KEY_FOLDERS, folders); }, [folders]);
+  useEffect(() => { saveToStorage(STORAGE_KEY_PENDING, pending); }, [pending]);
 
   // Cloud backup/restore
   const [cloudStatus, setCloudStatus] = useState(""); // "" | "saving" | "saved" | "restoring" | "restored" | "error"
+  const [manualBackupPhase, setManualBackupPhase] = useState(null); // null | "checking" | "confirming" | "syncing" | "done" | "error"
+  const [orphanSummaries, setOrphanSummaries] = useState([]);
+  const orphanResolveRef = useRef(null);
+  const [restorePhase, setRestorePhase] = useState(null); // null | "checking" | "confirming" | "fetching" | "applying" | "done" | "error"
+  const [restoreCloudSummary, setRestoreCloudSummary] = useState(null);
+  const [restoreProgress, setRestoreProgress] = useState({ current: 0, total: 0, message: "" });
+  const [restoreError, setRestoreError] = useState("");
+  const restoreResolveRef = useRef(null);
   const autoRestoredRef = useRef(false);
+  const cloudAbortRef = useRef(null); // クラウド通信の重複防止
+  const lastAutoBackupAtRef = useRef(0);
+  const processPendingInBackgroundRef = useRef(() => {});
+
+  // デッキ1つ分の送信ペイロードを組み立てる
+  const buildDeckPayload = useCallback((deck) => {
+    const deckStats = {};
+    for (const word of deck.words) {
+      const key = statsKey(word);
+      if (stats[key]) {
+        deckStats[key] = stats[key];
+      }
+    }
+    return { v: 2, deck: { ...deck }, stats: deckStats };
+  }, [stats]);
+
+  // 1つのデッキをクラウドに送信
+  const syncDeck = useCallback(async (deck, signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    return fetchJson(url, { action: "updateDeck", data: buildDeckPayload(deck) }, signal);
+  }, [settings.gasUrl, buildDeckPayload]);
+
+  // meta.json を更新
+  const syncMeta = useCallback(async (signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    return fetchJson(url, {
+      action: "updateMeta",
+      data: { v: 2, updatedAt: new Date().toISOString(), folders },
+    }, signal);
+  }, [settings.gasUrl, folders]);
+
+  // デッキファイルをクラウドから削除（P3で使用開始、P1では定義のみ）
+  const deleteDeckFromCloud = useCallback(async (deckId, signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    return fetchJson(url, { action: "deleteDeck", deckId }, signal);
+  }, [settings.gasUrl]);
+
+  // クラウドにある全デッキIDを取得
+  const fetchCloudDeckList = useCallback(async (signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    const res = await fetchJson(url, { action: "listDecks" }, signal);
+    return res.deckIds || [];
+  }, [settings.gasUrl]);
+
+  // 指定デッキIDの名前・語数をクラウドから取得
+  const fetchDeckSummaries = useCallback(async (deckIds, signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    if (deckIds.length === 0) return [];
+    const res = await fetchJson(url, { action: "getDeckSummaries", deckIds }, signal);
+    return res.summaries || [];
+  }, [settings.gasUrl]);
+
+  // クラウドにあってローカルにないデッキIDを返す
+  const detectOrphanDeckIds = useCallback((cloudDeckIds) => {
+    const localIds = new Set(decks.map(d => d.id));
+    return cloudDeckIds.filter(id => !localIds.has(id));
+  }, [decks]);
+
+  // クラウドの全体概要を取得
+  const fetchCloudSummary = useCallback(async (signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    const res = await fetchJson(url, { action: "getSummary" }, signal);
+    return res.summary;
+  }, [settings.gasUrl]);
+
+  // meta.json 取得
+  const fetchCloudMeta = useCallback(async (signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    const res = await fetchJson(url, { action: "getMeta" }, signal);
+    return res.data;
+  }, [settings.gasUrl]);
+
+  // デッキ1つ取得
+  const fetchCloudDeck = useCallback(async (deckId, signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    const res = await fetchJson(url, { action: "getDeck", deckId }, signal);
+    return res.data;
+  }, [settings.gasUrl]);
+
+  // ─── PENDING HELPERS ───
+  const addPendingDeletion = useCallback((deckId) => {
+    setPending(prev => ({
+      ...prev,
+      deletedDeckIds: prev.deletedDeckIds.includes(deckId)
+        ? prev.deletedDeckIds
+        : [...prev.deletedDeckIds, deckId],
+      dirtyDeckIds: prev.dirtyDeckIds.filter(id => id !== deckId),
+    }));
+  }, []);
+
+  const addPendingDirtyDeck = useCallback((deckId) => {
+    setPending(prev => {
+      if (prev.deletedDeckIds.includes(deckId)) return prev;
+      if (prev.dirtyDeckIds.includes(deckId)) return prev;
+      return { ...prev, dirtyDeckIds: [...prev.dirtyDeckIds, deckId] };
+    });
+  }, []);
+
+  const markMetaDirty = useCallback(() => {
+    setPending(prev => prev.metaDirty ? prev : { ...prev, metaDirty: true });
+  }, []);
+
+  const clearPendingDeletion = useCallback((deckId) => {
+    setPending(prev => ({
+      ...prev,
+      deletedDeckIds: prev.deletedDeckIds.filter(id => id !== deckId),
+    }));
+  }, []);
+
+  const clearPendingDirtyDeck = useCallback((deckId) => {
+    setPending(prev => ({
+      ...prev,
+      dirtyDeckIds: prev.dirtyDeckIds.filter(id => id !== deckId),
+    }));
+  }, []);
+
+  const clearMetaDirty = useCallback(() => {
+    setPending(prev => prev.metaDirty ? { ...prev, metaDirty: false } : prev);
+  }, []);
+
+  // confirming 以外になったら orphanSummaries をクリア
+  useEffect(() => {
+    if (manualBackupPhase !== "confirming") {
+      setOrphanSummaries([]);
+    }
+  }, [manualBackupPhase]);
+
+  // アンマウント時: モーダル表示中なら cancel で resolve して宙に浮かせない
+  useEffect(() => {
+    return () => {
+      if (orphanResolveRef.current) {
+        orphanResolveRef.current("cancel");
+        orphanResolveRef.current = null;
+      }
+      if (restoreResolveRef.current) {
+        restoreResolveRef.current("cancel");
+        restoreResolveRef.current = null;
+      }
+    };
+  }, []);
+
+  // 孤立確認モーダルを表示し、ユーザーの選択を待つ（"delete" | "keep" | "cancel"）
+  const showOrphanConfirmModal = useCallback((summaries) => {
+    return new Promise((resolve) => {
+      setOrphanSummaries(summaries);
+      setManualBackupPhase("confirming");
+      orphanResolveRef.current = resolve;
+    });
+  }, []);
+
+  const resolveOrphanChoice = useCallback((choice) => {
+    if (orphanResolveRef.current) {
+      orphanResolveRef.current(choice);
+      orphanResolveRef.current = null;
+    }
+  }, []);
+
+  // 復元確認モーダルを表示し、ユーザーの選択を待つ（"proceed" | "cancel"）
+  const showRestoreConfirmModal = useCallback((cloudSummary) => {
+    return new Promise((resolve) => {
+      setRestoreCloudSummary(cloudSummary);
+      setRestorePhase("confirming");
+      restoreResolveRef.current = resolve;
+    });
+  }, []);
+
+  const resolveRestoreChoice = useCallback((choice) => {
+    if (restoreResolveRef.current) {
+      restoreResolveRef.current(choice);
+      restoreResolveRef.current = null;
+    }
+  }, []);
 
   const runCloudBackup = useCallback(async (opts = {}) => {
     const url = settings.gasUrl;
     if (!url) return false;
-    const payload = { decks, stats, folders, settings: { ...settings, gasUrl: undefined }, v: 1 };
-    if (opts.silent !== true) setCloudStatus("saving");
+
+    if (cloudAbortRef.current) cloudAbortRef.current.abort();
+    const controller = new AbortController();
+    cloudAbortRef.current = controller;
+
+    const isSilent = opts.silent === true;
+
     try {
-      await gasBackup(url, payload);
-      if (opts.silent !== true) {
+      // フェーズ1: クラウドの一覧チェック（silent モードでは孤立チェックをスキップ）
+      let orphanIds = [];
+      if (!isSilent) {
+        setManualBackupPhase("checking");
+        setCloudStatus("saving");
+        const cloudDeckIds = await fetchCloudDeckList(controller.signal);
+        orphanIds = detectOrphanDeckIds(cloudDeckIds);
+      }
+
+      // フェーズ2: 孤立ファイルがあればユーザー確認
+      let deleteOrphans = false;
+      if (orphanIds.length > 0) {
+        const summaries = await fetchDeckSummaries(orphanIds, controller.signal);
+        const choice = await showOrphanConfirmModal(summaries);
+        if (choice === "cancel") {
+          setManualBackupPhase(null);
+          setCloudStatus("");
+          return false;
+        }
+        deleteOrphans = choice === "delete";
+      }
+
+      // フェーズ3: バックアップ処理
+      if (!isSilent) setManualBackupPhase("syncing");
+
+      // 孤立ファイル削除（選択された場合）
+      if (deleteOrphans) {
+        for (const deckId of orphanIds) {
+          if (controller.signal.aborted) return false;
+          try {
+            await deleteDeckFromCloud(deckId, controller.signal);
+          } catch (err) {
+            if (err && err.name === "AbortError") return false;
+            console.warn(`orphan delete failed for ${deckId}`, err);
+          }
+        }
+      }
+
+      // 全デッキをアップロード
+      for (const deck of decks) {
+        if (controller.signal.aborted) return false;
+        await syncDeck(deck, controller.signal);
+      }
+
+      // meta.json 更新
+      if (!controller.signal.aborted) {
+        await syncMeta(controller.signal);
+      }
+
+      processPendingInBackgroundRef.current();
+
+      if (!isSilent) {
+        setManualBackupPhase("done");
         setCloudStatus("saved");
-        setTimeout(() => setCloudStatus(""), 3000);
+        scheduleTimeout(() => {
+          setManualBackupPhase(null);
+          setCloudStatus("");
+        }, 3000);
       }
       return true;
-    } catch {
-      if (opts.silent !== true) {
+    } catch (err) {
+      if (err && err.name === "AbortError") {
+        if (!isSilent) {
+          setManualBackupPhase(null);
+          setCloudStatus("");
+        }
+        return false;
+      }
+      console.warn("runCloudBackup failed", err);
+      if (!isSilent) {
+        setManualBackupPhase("error");
         setCloudStatus("error");
-        setTimeout(() => setCloudStatus(""), 3000);
+        scheduleTimeout(() => {
+          setManualBackupPhase(null);
+          setCloudStatus("");
+        }, 3000);
       }
       return false;
     }
-  }, [settings, decks, stats, folders]);
+  }, [
+    settings.gasUrl, decks,
+    fetchCloudDeckList, detectOrphanDeckIds, fetchDeckSummaries,
+    showOrphanConfirmModal, deleteDeckFromCloud, syncDeck, syncMeta,
+    scheduleTimeout,
+  ]);
 
   const runCloudRestore = useCallback(async (opts = {}) => {
     const url = settings.gasUrl;
     if (!url) return false;
-    if (opts.silent !== true) setCloudStatus("restoring");
-    try {
-      const data = await gasRestore(url);
-      if (!data) {
-        if (opts.silent !== true) {
-          setCloudStatus("error");
-          setTimeout(() => setCloudStatus(""), 3000);
+
+    if (cloudAbortRef.current) cloudAbortRef.current.abort();
+    const controller = new AbortController();
+    cloudAbortRef.current = controller;
+
+    // silent モード（起動時の自動復元）は従来通りの簡易フロー
+    if (opts.silent === true) {
+      try {
+        const metaRes = await fetchJson(url, { action: "getMeta" }, controller.signal);
+        const meta = metaRes.data;
+        const listRes = await fetchJson(url, { action: "listDecks" }, controller.signal);
+        const deckIds = listRes.deckIds || [];
+        const fetchedDecks = [];
+        const fetchedStats = {};
+        for (const deckId of deckIds) {
+          if (controller.signal.aborted) return false;
+          const data = await fetchCloudDeck(deckId, controller.signal);
+          if (data) {
+            fetchedDecks.push(data.deck);
+            Object.assign(fetchedStats, data.stats || {});
+          }
         }
+        setDecks(fetchedDecks);
+        setStats(fetchedStats);
+        setFolders((meta && meta.folders) || []);
+        setPending(DEFAULT_PENDING);
+        return true;
+      } catch (err) {
+        if (err && err.name === "AbortError") return false;
         return false;
       }
-      if (data.decks) setDecks(data.decks);
-      if (data.stats) setStats(data.stats);
-      if (data.folders) setFolders(data.folders);
-      if (data.settings) setSettings(prev => ({ ...prev, ...data.settings, gasUrl: prev.gasUrl }));
-      if (opts.silent !== true) {
-        setCloudStatus("restored");
-        setTimeout(() => setCloudStatus(""), 3000);
+    }
+
+    try {
+      // フェーズ1: クラウド概要取得
+      setRestorePhase("checking");
+      setRestoreError("");
+      const cloudSummary = await fetchCloudSummary(controller.signal);
+
+      // フェーズ2: ユーザー確認
+      const choice = await showRestoreConfirmModal(cloudSummary);
+      if (choice === "cancel") {
+        setRestorePhase(null);
+        setRestoreCloudSummary(null);
+        return false;
       }
+
+      // フェーズ3: 取得処理（ローカルは一切変更しない）
+      setRestorePhase("fetching");
+      setRestoreProgress({ current: 0, total: 0, message: "メタ情報を取得中..." });
+
+      const meta = await fetchCloudMeta(controller.signal);
+      if (controller.signal.aborted) return false;
+
+      setRestoreProgress({ current: 0, total: 0, message: "単語帳一覧を取得中..." });
+      const listRes = await fetchJson(url, { action: "listDecks" }, controller.signal);
+      const deckIds = listRes.deckIds || [];
+      if (controller.signal.aborted) return false;
+
+      const fetchedDecks = [];
+      const fetchedStats = {};
+      for (let i = 0; i < deckIds.length; i++) {
+        if (controller.signal.aborted) return false;
+        setRestoreProgress({
+          current: i + 1,
+          total: deckIds.length,
+          message: `単語帳を取得中... (${i + 1}/${deckIds.length})`,
+        });
+        const data = await fetchCloudDeck(deckIds[i], controller.signal);
+        if (!data) throw new Error(`デッキ ${deckIds[i]} の取得に失敗しました`);
+        fetchedDecks.push(data.deck);
+        Object.assign(fetchedStats, data.stats || {});
+      }
+
+      // フェーズ4: 一括適用（トランザクション的）
+      setRestorePhase("applying");
+      setRestoreProgress({ current: 0, total: 0, message: "適用中..." });
+      setDecks(fetchedDecks);
+      setStats(fetchedStats);
+      setFolders((meta && meta.folders) || []);
+      setPending(DEFAULT_PENDING);
+
+      // フェーズ5: 完了
+      setRestorePhase("done");
+      scheduleTimeout(() => {
+        setRestorePhase(null);
+        setRestoreCloudSummary(null);
+        setRestoreProgress({ current: 0, total: 0, message: "" });
+      }, 3000);
       return true;
-    } catch {
-      if (opts.silent !== true) {
-        setCloudStatus("error");
-        setTimeout(() => setCloudStatus(""), 3000);
+    } catch (err) {
+      if (err && err.name === "AbortError") {
+        setRestorePhase(null);
+        setRestoreCloudSummary(null);
+        return false;
       }
+      console.warn("runCloudRestore failed", err);
+      setRestoreError(err.message || "復元に失敗しました");
+      setRestorePhase("error");
+      scheduleTimeout(() => {
+        setRestorePhase(null);
+        setRestoreCloudSummary(null);
+        setRestoreError("");
+      }, 5000);
       return false;
     }
-  }, [settings.gasUrl]);
+  }, [
+    settings.gasUrl,
+    fetchCloudSummary, showRestoreConfirmModal, fetchCloudMeta, fetchCloudDeck,
+    scheduleTimeout,
+  ]);
 
   // Auto-restore on startup: if gasUrl is set and local data is empty
   useEffect(() => {
@@ -374,12 +856,116 @@ export default function RapidCycleApp() {
     runCloudRestore({ silent: true });
   }, [settings.gasUrl, decks.length, folders.length, stats, runCloudRestore]);
 
-  // Auto-backup when a study session finishes
+  // 保留中の操作をリトライする
+  const processPending = useCallback(async () => {
+    if (!settings.gasUrl) return;
+    const snapshot = {
+      deletedDeckIds: [...pending.deletedDeckIds],
+      metaDirty: pending.metaDirty,
+      dirtyDeckIds: [...pending.dirtyDeckIds],
+    };
+    const controller = new AbortController();
+    for (const deckId of snapshot.deletedDeckIds) {
+      try {
+        await deleteDeckFromCloud(deckId, controller.signal);
+        clearPendingDeletion(deckId);
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+        console.warn(`pending deleteDeck failed for ${deckId}`, err);
+      }
+    }
+    for (const deckId of snapshot.dirtyDeckIds) {
+      const deck = decksRef.current.find(d => d.id === deckId);
+      if (!deck) { clearPendingDirtyDeck(deckId); continue; }
+      try {
+        await syncDeck(deck, controller.signal);
+        clearPendingDirtyDeck(deckId);
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+        console.warn(`pending syncDeck failed for ${deckId}`, err);
+      }
+    }
+    if (snapshot.metaDirty) {
+      try {
+        await syncMeta(controller.signal);
+        clearMetaDirty();
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+        console.warn("pending syncMeta failed", err);
+      }
+    }
+  }, [settings.gasUrl, pending, deleteDeckFromCloud, syncDeck, syncMeta, clearPendingDeletion, clearPendingDirtyDeck, clearMetaDirty]);
+
+  const processPendingInBackground = useCallback(() => {
+    processPending().catch(err => console.warn("processPending error", err));
+  }, [processPending]);
+  processPendingInBackgroundRef.current = processPendingInBackground;
+
+  // touchedDeckIds に含まれるデッキだけを差分同期
+  const syncTouchedDecks = useCallback(async () => {
+    if (!settings.gasUrl) return;
+    if (touchedDeckIds.size === 0) return;
+
+    if (cloudAbortRef.current) cloudAbortRef.current.abort();
+    const controller = new AbortController();
+    cloudAbortRef.current = controller;
+
+    for (const deckId of touchedDeckIds) {
+      if (controller.signal.aborted) return;
+      const deck = decks.find(d => d.id === deckId);
+      if (!deck) continue;
+      try {
+        await syncDeck(deck, controller.signal);
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+        console.warn(`syncDeck failed for ${deckId}, adding to pending`, err);
+        addPendingDirtyDeck(deckId);
+      }
+    }
+    processPendingInBackground();
+  }, [settings.gasUrl, touchedDeckIds, decks, syncDeck, addPendingDirtyDeck, processPendingInBackground]);
+
+  // 起動時: 保留中の操作をリトライ
+  useEffect(() => {
+    scheduleTimeout(() => processPendingInBackgroundRef.current(), 1000);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 学習終了時: 触れたデッキだけ差分同期（5分デバウンス）
   useEffect(() => {
     if (view !== "result") return;
     if (!settings.gasUrl) return;
-    runCloudBackup({ silent: true });
-  }, [view, settings.gasUrl, runCloudBackup]);
+    if (touchedDeckIds.size === 0) return;
+    const now = Date.now();
+    if (now - lastAutoBackupAtRef.current < CLOUD_BACKUP_MIN_INTERVAL_MS) return;
+    lastAutoBackupAtRef.current = now;
+    syncTouchedDecks();
+  }, [view, settings.gasUrl, touchedDeckIds]);
+
+  // 指定デッキの同期を3秒後にスケジュール。連続呼び出しはタイマーリセット
+  const scheduleDeckSync = useCallback((deck) => {
+    if (!settings.gasUrl) return;
+
+    const existing = deckSyncTimersRef.current.get(deck.id);
+    if (existing !== undefined) {
+      clearTimeout(existing);
+      deckSyncTimersRef.current.delete(deck.id);
+    }
+
+    const tid = scheduleTimeout(() => {
+      deckSyncTimersRef.current.delete(deck.id);
+      const latestDeck = decksRef.current.find(d => d.id === deck.id);
+      if (!latestDeck) return;
+      const controller = new AbortController();
+      syncDeck(latestDeck, controller.signal).catch(err => {
+        if (err && err.name === "AbortError") return;
+        console.warn("scheduled syncDeck failed, adding to pending", err);
+        addPendingDirtyDeck(latestDeck.id);
+      });
+    }, 3000);
+
+    deckSyncTimersRef.current.set(deck.id, tid);
+  }, [settings.gasUrl, syncDeck, scheduleTimeout, addPendingDirtyDeck]);
 
   const currentCard = cards[currentIdx];
 
@@ -388,24 +974,69 @@ export default function RapidCycleApp() {
     const id = Date.now().toString(36);
     const newDeck = { id, name, words, createdAt: Date.now(), folderId };
     setDecks(prev => [newDeck, ...prev]);
+    if (settings.gasUrl) {
+      const controller = new AbortController();
+      syncDeck(newDeck, controller.signal).catch(err => {
+        if (err && err.name === "AbortError") return;
+        console.warn("immediate syncDeck (new) failed, adding to pending", err);
+        addPendingDirtyDeck(newDeck.id);
+      });
+    }
     return newDeck;
   };
 
-  const deleteDeck = (id) => {
+  const deleteDeck = useCallback((id) => {
     setDecks(prev => prev.filter(d => d.id !== id));
-  };
+    if (settings.gasUrl) {
+      const controller = new AbortController();
+      deleteDeckFromCloud(id, controller.signal).catch(err => {
+        if (err && err.name === "AbortError") return;
+        console.warn("deleteDeckFromCloud failed, adding to pending", err);
+        addPendingDeletion(id);
+      });
+    }
+  }, [settings.gasUrl, deleteDeckFromCloud, addPendingDeletion]);
 
   // ─── FOLDER MANAGEMENT ───
   const createFolder = (name) => {
     const id = Date.now().toString(36) + "f";
     const folder = { id, name };
     setFolders(prev => [...prev, folder]);
+    if (settings.gasUrl) {
+      // setFolders 直後は state 更新前なので次フレームで実行
+      const controller = new AbortController();
+      scheduleTimeout(() => {
+        syncMeta(controller.signal).catch(err => {
+          if (err && err.name === "AbortError") return;
+          console.warn("immediate syncMeta (folder create) failed, marking pending", err);
+          markMetaDirty();
+        });
+      }, 0);
+    }
     return folder;
   };
 
   const deleteFolder = (id) => {
+    const affectedDecks = decks.filter(d => d.folderId === id);
     setDecks(prev => prev.map(d => d.folderId === id ? { ...d, folderId: null } : d));
     setFolders(prev => prev.filter(f => f.id !== id));
+    if (settings.gasUrl) {
+      const controller = new AbortController();
+      scheduleTimeout(() => {
+        syncMeta(controller.signal).catch(err => {
+          if (err && err.name === "AbortError") return;
+          console.warn("immediate syncMeta (folder delete) failed, marking pending", err);
+          markMetaDirty();
+        });
+        for (const d of affectedDecks) {
+          syncDeck({ ...d, folderId: null }, controller.signal).catch(err => {
+            if (err && err.name === "AbortError") return;
+            console.warn("syncDeck (folder delete cascade) failed, adding to pending", err);
+            addPendingDirtyDeck(d.id);
+          });
+        }
+      }, 0);
+    }
   };
 
   const executeDelete = () => {
@@ -416,6 +1047,13 @@ export default function RapidCycleApp() {
     } else if (deleteConfirm.type === "folder") {
       deleteFolder(deleteConfirm.id);
       if (activeFolder && activeFolder.id === deleteConfirm.id) setView("home");
+    } else if (deleteConfirm.type === "word") {
+      const words = activeDeck.words.filter((_, i) => i !== deleteConfirm.idx);
+      updateDeckWords(activeDeck.id, words);
+      setEditingIdx(null);
+      scheduleDeckSync({ ...activeDeck, words });
+    } else if (deleteConfirm.type === "stats") {
+      setStats({});
     }
     setDeleteConfirm(null);
   };
@@ -426,6 +1064,17 @@ export default function RapidCycleApp() {
 
   const moveDeckToFolder = (deckId, folderId) => {
     setDecks(prev => prev.map(d => d.id === deckId ? { ...d, folderId } : d));
+    if (settings.gasUrl) {
+      const targetDeck = decks.find(d => d.id === deckId);
+      if (targetDeck) {
+        const controller = new AbortController();
+        syncDeck({ ...targetDeck, folderId }, controller.signal).catch(err => {
+          if (err && err.name === "AbortError") return;
+          console.warn("immediate syncDeck (folder move) failed, adding to pending", err);
+          addPendingDirtyDeck(deckId);
+        });
+      }
+    }
   };
 
   const getDecksInFolder = (folderId) => decks.filter(d => d.folderId === folderId);
@@ -456,7 +1105,7 @@ export default function RapidCycleApp() {
       seen.add(k);
       return true;
     });
-    const selected = shuffle(allWords).slice(0, count);
+    const selected = count === null ? shuffle(allWords) : shuffle(allWords).slice(0, count);
     if (selected.length === 0) return;
     const tempDeck = { id: "__cross__", name: label, words: selected };
     setActiveDeck(tempDeck);
@@ -474,6 +1123,7 @@ export default function RapidCycleApp() {
     setSwipeX(0);
     setAnimatingCards([]);
     setSessionTotal(0);
+    setTouchedDeckIds(new Set());
     sessionIdRef.current = genId();
     setView("study");
   };
@@ -481,74 +1131,10 @@ export default function RapidCycleApp() {
   // ─── MEMORY HELPERS ───
   const getMemoryScore = (w) => {
     const key = typeof w === "object" ? statsKey(w) : w;
-    const st = stats[key];
-    if (!st || !st.log || st.log.length === 0) return 0;
-    const log = st.log.slice(-100);
-
-    const getIntervalDecay = (hours) => {
-      if (hours < 1) return 0.6;
-      if (hours < 3) return 0.7;
-      if (hours < 6) return 0.8;
-      if (hours < 12) return 0.9;
-      if (hours < 24) return 0.95;
-      return 1.0;
-    };
-
-    // Group by session ID. Time decay = gap from previous session's end to this session's start.
-    let prevSessionEndTime = null;
-    let currentSid = null;
-    let currentTimeDecay = 1.0;
-    const timeDecays = new Array(log.length);
-
-    for (let i = 0; i < log.length; i++) {
-      const entry = log[i];
-      const entryTime = new Date(entry.date).getTime();
-      const sid = entry.sid || `legacy_${i}`;
-
-      if (sid !== currentSid) {
-        // Close previous session FIRST, then calculate gap
-        if (currentSid !== null) {
-          prevSessionEndTime = new Date(log[i - 1].date).getTime();
-        }
-        // Now calculate decay for the new session
-        if (prevSessionEndTime !== null) {
-          const gapHours = (entryTime - prevSessionEndTime) / 3600000;
-          currentTimeDecay = getIntervalDecay(gapHours);
-        } else {
-          currentTimeDecay = 1.0;
-        }
-        currentSid = sid;
-      }
-      timeDecays[i] = currentTimeDecay;
-    }
-
-    // Weighted average: weight = roundDecay * timeDecay
-    // Correct entries score their full weight, incorrect entries score 0
-    // Divide by totalWeight (not by count) to avoid the "more reviews = lower score" paradox
-    let accuracySum = 0;
-    let peekSum = 0;
-    let totalWeight = 0.5;  // ← 1回目正解時の急上昇を防ぐ仮想ペナルティ
-
-    for (let i = 0; i < log.length; i++) {
-      const entry = log[i];
-      const rd = entry.round || 1;
-      const roundDecay = 1 / rd;
-      const timeDecay = timeDecays[i];
-      const weight = roundDecay * timeDecay;
-
-      totalWeight += weight;
-      if (entry.correct) {
-        accuracySum += weight;
-        if (!entry.peeked) {
-          peekSum += weight;
-        }
-      }
-    }
-
-    if (totalWeight === 0) return 0;
-    const accuracy = accuracySum / totalWeight;
-    const peekRatio = peekSum / totalWeight;
-    return accuracy * 0.6 + peekRatio * 0.4;
+    // activeDeck内の単語はMapからO(1)で取得、それ以外（横断学習等）はフォールバック
+    const cached = memoryScoresMap.get(key);
+    if (cached !== undefined) return cached;
+    return computeMemoryScore(stats, w);
   };
 
   // Returns a reappear multiplier based on memory score
@@ -563,9 +1149,10 @@ export default function RapidCycleApp() {
   };
 
   // ─── STUDY LOGIC ───
-  const startStudy = (deck) => {
+  const startStudy = (deck, studyWords) => {
     setActiveDeck(deck);
-    const shuffled = shuffle(deck.words);
+    const sourceWords = studyWords !== undefined ? studyWords : deck.words;
+    const shuffled = shuffle(sourceWords);
     setCards(shuffled);
     setCurrentIdx(0);
     setFlipped(false);
@@ -578,6 +1165,7 @@ export default function RapidCycleApp() {
     setSwipeX(0);
     setAnimatingCards([]);
     setSessionTotal(0);
+    setTouchedDeckIds(new Set());
     sessionIdRef.current = genId();
     setView("study");
   };
@@ -599,6 +1187,17 @@ export default function RapidCycleApp() {
       };
     });
     setSessionTotal(prev => prev + 1);
+
+    // 学習した単語の所属デッキを記録（横断学習対応）
+    const deckId = wordToDeckMap.get(key);
+    if (deckId) {
+      setTouchedDeckIds(prev => {
+        if (prev.has(deckId)) return prev;
+        const next = new Set(prev);
+        next.add(deckId);
+        return next;
+      });
+    }
   };
 
   // Dismiss with trajectory based on swipe end position and velocity
@@ -623,13 +1222,13 @@ export default function RapidCycleApp() {
     setAnimatingCards(prev => [...prev, { id, card, wasFlipped, startX: swipeEndX || 0, startY: swipeEndY || 0, exitX, exitY, exitRotate, phase: "start" }]);
 
     // Phase 2: trigger exit on next frame
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
+    scheduleRAF(() => {
+      scheduleRAF(() => {
         setAnimatingCards(prev => prev.map(a => a.id === id ? { ...a, phase: "exit" } : a));
       });
     });
 
-    setTimeout(() => {
+    scheduleTimeout(() => {
       setAnimatingCards(prev => prev.filter(a => a.id !== id));
     }, 1100);
 
@@ -954,24 +1553,28 @@ export default function RapidCycleApp() {
             </button>
           </div>
 
-          {/* Delete confirmation modal */}
-          {deleteConfirm && (
-            <div style={s.modalOverlay} onClick={() => setDeleteConfirm(null)}>
-              <div style={s.modal} onClick={e => e.stopPropagation()}>
-                <p style={s.modalTitle}>
-                  {deleteConfirm.type === "folder" ? "フォルダを削除" : "単語帳を削除"}
-                </p>
-                <p style={s.modalDesc}>
-                  「{deleteConfirm.name}」を削除しますか？
-                  {deleteConfirm.type === "folder" && "中の単語帳は削除されず、フォルダ外に移動されます。"}
-                </p>
-                <div style={s.modalActions}>
-                  <button style={s.modalCancelBtn} onClick={() => setDeleteConfirm(null)}>キャンセル</button>
-                  <button style={s.modalConfirmBtn} onClick={executeDelete}>削除する</button>
+          {/* Confirmation modal */}
+          {deleteConfirm && (() => {
+            const labels = {
+              deck:    { title: "単語帳を削除",       desc: `「${deleteConfirm.name}」を削除しますか？この操作は取り消せません。`, confirm: "削除する" },
+              folder:  { title: "フォルダを削除",     desc: `「${deleteConfirm.name}」を削除しますか？中の単語帳は削除されず、フォルダ外に移動されます。`, confirm: "削除する" },
+              word:    { title: "単語を削除",         desc: `「${deleteConfirm.name}」を削除しますか？`, confirm: "削除する" },
+              stats:   { title: "学習記録をリセット", desc: "全ての学習記録をリセットしますか？単語帳は残ります。", confirm: "リセットする" },
+            };
+            const label = labels[deleteConfirm.type] || labels.deck;
+            return (
+              <div style={s.modalOverlay} onClick={() => setDeleteConfirm(null)}>
+                <div style={s.modal} onClick={e => e.stopPropagation()}>
+                  <p style={s.modalTitle}>{label.title}</p>
+                  <p style={s.modalDesc}>{label.desc}</p>
+                  <div style={s.modalActions}>
+                    <button style={s.modalCancelBtn} onClick={() => setDeleteConfirm(null)}>キャンセル</button>
+                    <button style={s.modalConfirmBtn} onClick={executeDelete}>{label.confirm}</button>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       </div>
     );
@@ -995,7 +1598,12 @@ export default function RapidCycleApp() {
       { key: "2", label: "あと少し" },
       { key: "3", label: "定着" },
     ];
-    const countOptions = [10, 20, 30, 50, 100, 200];
+    const countOptions = [
+      { label: "全て", value: null },
+      { label: "10語", value: 10 },
+      { label: "25語", value: 25 },
+      { label: "50語", value: 50 },
+    ];
 
     return (
       <div style={s.shell}>
@@ -1008,6 +1616,24 @@ export default function RapidCycleApp() {
           <p style={{ fontSize: "13px", color: t.textMuted, margin: "0 0 20px" }}>
             {sourceLabel}から{filteredCount}語が対象
           </p>
+
+          {/* Count selector */}
+          <div style={s.formGroup}>
+            <label style={s.label}>出題数</label>
+            <div style={s.filterRow}>
+              {countOptions.map(opt => (
+                <button key={String(opt.value)} onClick={() => setCrossCount(opt.value)}
+                  style={crossCount === opt.value ? s.filterActive : s.filterInactive}>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <p style={{ fontSize: "12px", color: t.textMuted, margin: "4px 0 0" }}>
+              {crossCount === null || filteredCount <= crossCount
+                ? `${filteredCount}語を全て出題`
+                : `${filteredCount}語からランダムに${crossCount}語を出題`}
+            </p>
+          </div>
 
           {/* Memory filter */}
           <div style={s.formGroup}>
@@ -1022,28 +1648,12 @@ export default function RapidCycleApp() {
             </div>
           </div>
 
-          {/* Count selector */}
-          <div style={s.formGroup}>
-            <label style={s.label}>出題数</label>
-            <div style={s.filterRow}>
-              {countOptions.map(n => (
-                <button key={n} onClick={() => setCrossCount(n)}
-                  style={crossCount === n ? s.filterActive : s.filterInactive}>
-                  {n}語
-                </button>
-              ))}
-            </div>
-            <p style={{ fontSize: "12px", color: t.textMuted, margin: "4px 0 0" }}>
-              {filteredCount < crossCount ? `対象が${filteredCount}語のため、全問出題されます` : `${filteredCount}語からランダムに${crossCount}語を出題`}
-            </p>
-          </div>
-
           <button
             style={{ ...s.primaryBtn, marginTop: "20px", opacity: filteredCount > 0 ? 1 : 0.4 }}
             disabled={filteredCount === 0}
             onClick={() => startCrossStudy(sourceDecks, crossFilter, crossCount, `${sourceLabel}（横断）`)}
           >
-            {Math.min(filteredCount, crossCount)}語で学習開始
+            {crossCount === null ? filteredCount : Math.min(filteredCount, crossCount)}語で学習開始
           </button>
         </div>
       </div>
@@ -1079,14 +1689,12 @@ export default function RapidCycleApp() {
     }
     updateDeckWords(activeDeck.id, words);
     setEditingIdx(null);
+    scheduleDeckSync({ ...activeDeck, words });
   };
 
   const deleteWord = (idx) => {
     const w = activeDeck.words[idx];
-    if (!confirm(`「${w.word}」を削除しますか？`)) return;
-    const words = activeDeck.words.filter((_, i) => i !== idx);
-    updateDeckWords(activeDeck.id, words);
-    setEditingIdx(null);
+    setDeleteConfirm({ type: "word", idx, name: w.word });
   };
 
   const renameDeck = () => {
@@ -1095,6 +1703,7 @@ export default function RapidCycleApp() {
     setDecks(prev => prev.map(d => d.id === activeDeck.id ? { ...d, name: newName } : d));
     setActiveDeck(prev => prev ? { ...prev, name: newName } : prev);
     setIsRenamingDeck(false);
+    scheduleDeckSync({ ...activeDeck, name: newName });
   };
 
   const exportDeck = async () => {
@@ -1109,7 +1718,7 @@ export default function RapidCycleApp() {
     try {
       await navigator.clipboard.writeText(csv);
       setExportCopied(true);
-      setTimeout(() => setExportCopied(false), 2000);
+      scheduleTimeout(() => setExportCopied(false), 2000);
     } catch {
       // Fallback: open in new window
       const w = window.open();
@@ -1153,7 +1762,7 @@ export default function RapidCycleApp() {
       <div style={s.shell}>
         <div style={s.page}>
           <header style={s.subHeader}>
-            <button style={s.backBtn} onClick={() => { setView("home"); setEditingIdx(null); setDetailFilter("all"); setIsRenamingDeck(false); }}>← 戻る</button>
+            <button style={s.backBtn} onClick={() => { setView("home"); setEditingIdx(null); setDetailFilter("all"); setDetailCount(null); setIsRenamingDeck(false); }}>← 戻る</button>
             {isRenamingDeck ? (
               <div style={s.renameRow}>
                 <input
@@ -1193,14 +1802,18 @@ export default function RapidCycleApp() {
               style={{ ...s.primaryBtn, flex: 1, opacity: filteredWords.length > 0 ? 1 : 0.4 }}
               disabled={filteredWords.length === 0}
               onClick={() => {
-                const tempDeck = { ...activeDeck, words: filteredWords };
-                startStudy(tempDeck);
+                const studyWords = detailCount === null || filteredWords.length <= detailCount
+                  ? filteredWords
+                  : shuffle([...filteredWords]).slice(0, detailCount);
+                startStudy(activeDeck, studyWords);
               }}
             >
-              {detailFilter === "all"
-                ? `学習を開始する`
-                : `${filteredWords.length}語で学習する`
-              }
+              {(() => {
+                const n = detailCount === null || filteredWords.length <= detailCount
+                  ? filteredWords.length
+                  : detailCount;
+                return `${n}語で学習する`;
+              })()}
             </button>
             <button style={{ ...s.exportBtn, borderColor: exportCopied ? "rgba(74, 222, 128, 0.3)" : t.borderLight }} onClick={exportDeck}>
               {exportCopied ? (
@@ -1228,6 +1841,19 @@ export default function RapidCycleApp() {
               </select>
             </div>
           )}
+
+          {/* Count selector */}
+          <div style={{ ...s.filterRow, marginBottom: "6px" }}>
+            {[{ label: "全て", value: null }, { label: "10語", value: 10 }, { label: "25語", value: 25 }, { label: "50語", value: 50 }].map(opt => (
+              <button
+                key={String(opt.value)}
+                onClick={() => setDetailCount(opt.value)}
+                style={detailCount === opt.value ? s.filterActive : s.filterInactive}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
 
           {/* Filter chips */}
           <div style={s.filterRow}>
@@ -1423,25 +2049,28 @@ export default function RapidCycleApp() {
             );
           })()}
 
-          {/* Delete confirmation modal */}
-          {deleteConfirm && (
-            <div style={s.modalOverlay} onClick={() => setDeleteConfirm(null)}>
-              <div style={s.modal} onClick={e => e.stopPropagation()}>
-                <p style={s.modalTitle}>
-                  {deleteConfirm.type === "folder" ? "フォルダを削除" : "単語帳を削除"}
-                </p>
-                <p style={s.modalDesc}>
-                  「{deleteConfirm.name}」を削除しますか？
-                  {deleteConfirm.type === "folder" && "中の単語帳は削除されず、フォルダ外に移動されます。"}
-                  {deleteConfirm.type === "deck" && "この操作は取り消せません。"}
-                </p>
-                <div style={s.modalActions}>
-                  <button style={s.modalCancelBtn} onClick={() => setDeleteConfirm(null)}>キャンセル</button>
-                  <button style={s.modalConfirmBtn} onClick={executeDelete}>削除する</button>
+          {/* Confirmation modal */}
+          {deleteConfirm && (() => {
+            const labels = {
+              deck:    { title: "単語帳を削除",       desc: `「${deleteConfirm.name}」を削除しますか？この操作は取り消せません。`, confirm: "削除する" },
+              folder:  { title: "フォルダを削除",     desc: `「${deleteConfirm.name}」を削除しますか？中の単語帳は削除されず、フォルダ外に移動されます。`, confirm: "削除する" },
+              word:    { title: "単語を削除",         desc: `「${deleteConfirm.name}」を削除しますか？`, confirm: "削除する" },
+              stats:   { title: "学習記録をリセット", desc: "全ての学習記録をリセットしますか？単語帳は残ります。", confirm: "リセットする" },
+            };
+            const label = labels[deleteConfirm.type] || labels.deck;
+            return (
+              <div style={s.modalOverlay} onClick={() => setDeleteConfirm(null)}>
+                <div style={s.modal} onClick={e => e.stopPropagation()}>
+                  <p style={s.modalTitle}>{label.title}</p>
+                  <p style={s.modalDesc}>{label.desc}</p>
+                  <div style={s.modalActions}>
+                    <button style={s.modalCancelBtn} onClick={() => setDeleteConfirm(null)}>キャンセル</button>
+                    <button style={s.modalConfirmBtn} onClick={executeDelete}>{label.confirm}</button>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       </div>
     );
@@ -1566,19 +2195,27 @@ export default function RapidCycleApp() {
               <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
                 <button
                   style={{ ...s.ghostBtn, flex: 1, padding: "10px", fontSize: "13px", opacity: settings.gasUrl ? 1 : 0.5 }}
-                  disabled={!settings.gasUrl || cloudStatus === "saving" || cloudStatus === "restoring"}
+                  disabled={!settings.gasUrl || manualBackupPhase !== null}
                   onClick={() => runCloudBackup()}
                 >
-                  {cloudStatus === "saving" ? "保存中..." : cloudStatus === "saved" ? "✓ 保存完了" : "今すぐバックアップ"}
+                  {manualBackupPhase === "checking" && "クラウド確認中..."}
+                  {manualBackupPhase === "confirming" && "確認待ち..."}
+                  {manualBackupPhase === "syncing" && "バックアップ中..."}
+                  {manualBackupPhase === "done" && "✓ 完了"}
+                  {manualBackupPhase === "error" && "エラー"}
+                  {manualBackupPhase === null && "今すぐバックアップ"}
                 </button>
                 <button
                   style={{ ...s.ghostBtn, flex: 1, padding: "10px", fontSize: "13px", opacity: settings.gasUrl ? 1 : 0.5 }}
-                  disabled={!settings.gasUrl || cloudStatus === "saving" || cloudStatus === "restoring"}
-                  onClick={() => {
-                    if (confirm("クラウドのデータで現在のデータを上書きしますか？")) runCloudRestore();
-                  }}
+                  disabled={!settings.gasUrl || restorePhase !== null || manualBackupPhase !== null}
+                  onClick={() => runCloudRestore()}
                 >
-                  {cloudStatus === "restoring" ? "復元中..." : cloudStatus === "restored" ? "✓ 復元完了" : "復元する"}
+                  {restorePhase === "checking" && "確認中..."}
+                  {restorePhase === "fetching" && "取得中..."}
+                  {restorePhase === "applying" && "適用中..."}
+                  {restorePhase === "done" && "✓ 復元完了"}
+                  {restorePhase === "error" && "エラー"}
+                  {(restorePhase === null || restorePhase === "confirming") && "復元する"}
                 </button>
               </div>
               {cloudStatus === "error" && (
@@ -1600,10 +2237,10 @@ export default function RapidCycleApp() {
                     try {
                       await navigator.clipboard.writeText(payload);
                       setBackupStatus("saved");
-                      setTimeout(() => setBackupStatus(""), 3000);
+                      scheduleTimeout(() => setBackupStatus(""), 3000);
                     } catch {
                       setBackupStatus("error");
-                      setTimeout(() => setBackupStatus(""), 3000);
+                      scheduleTimeout(() => setBackupStatus(""), 3000);
                     }
                   }}
                 >
@@ -1619,10 +2256,10 @@ export default function RapidCycleApp() {
                       if (d.folders) setFolders(d.folders);
                       if (d.settings) setSettings(prev => ({ ...prev, ...d.settings, gasUrl: prev.gasUrl }));
                       setBackupStatus("restored");
-                      setTimeout(() => setBackupStatus(""), 3000);
+                      scheduleTimeout(() => setBackupStatus(""), 3000);
                     } catch {
                       setBackupStatus("error");
-                      setTimeout(() => setBackupStatus(""), 3000);
+                      scheduleTimeout(() => setBackupStatus(""), 3000);
                     }
                   }}
                 >
@@ -1637,11 +2274,7 @@ export default function RapidCycleApp() {
 
           <div style={s.settingsSection}>
             <p style={s.sectionLabel}>データ管理</p>
-            <button style={s.dangerBtn} onClick={() => {
-              if (confirm("全ての学習記録をリセットしますか？単語帳は残ります。")) {
-                setStats({});
-              }
-            }}>
+            <button style={s.dangerBtn} onClick={() => setDeleteConfirm({ type: "stats", name: "学習記録" })}>
               学習記録をリセット
             </button>
           </div>
@@ -1652,6 +2285,239 @@ export default function RapidCycleApp() {
             </button>
           </div>
         </div>
+
+        {/* Confirmation modal */}
+        {deleteConfirm && (() => {
+          const labels = {
+            deck:    { title: "単語帳を削除",       desc: `「${deleteConfirm.name}」を削除しますか？この操作は取り消せません。`, confirm: "削除する" },
+            folder:  { title: "フォルダを削除",     desc: `「${deleteConfirm.name}」を削除しますか？中の単語帳は削除されず、フォルダ外に移動されます。`, confirm: "削除する" },
+            word:    { title: "単語を削除",         desc: `「${deleteConfirm.name}」を削除しますか？`, confirm: "削除する" },
+            stats:   { title: "学習記録をリセット", desc: "全ての学習記録をリセットしますか？単語帳は残ります。", confirm: "リセットする" },
+            restore: { title: "クラウドから復元",   desc: "クラウドのデータで現在のデータを上書きしますか？", confirm: "復元する" },
+          };
+          const label = labels[deleteConfirm.type] || labels.deck;
+          return (
+            <div style={s.modalOverlay} onClick={() => setDeleteConfirm(null)}>
+              <div style={s.modal} onClick={e => e.stopPropagation()}>
+                <p style={s.modalTitle}>{label.title}</p>
+                <p style={s.modalDesc}>{label.desc}</p>
+                <div style={s.modalActions}>
+                  <button style={s.modalCancelBtn} onClick={() => setDeleteConfirm(null)}>キャンセル</button>
+                  <button style={s.modalConfirmBtn} onClick={executeDelete}>{label.confirm}</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* 孤立ファイル確認モーダル */}
+        {manualBackupPhase === "confirming" && (
+          <div style={s.modalOverlay} onClick={() => resolveOrphanChoice("cancel")}>
+            <div style={{ ...s.modal, maxWidth: "380px" }} onClick={e => e.stopPropagation()}>
+              <p style={s.modalTitle}>クラウドの孤立ファイルを処理</p>
+              <p style={s.modalDesc}>
+                以下のデッキがクラウドに残っていますが、端末には存在しません。
+              </p>
+              <div style={{
+                maxHeight: "200px",
+                overflowY: "auto",
+                background: t.inputBg,
+                borderRadius: "10px",
+                padding: "10px 14px",
+                margin: "0 0 12px",
+                border: `1px solid ${t.borderLight}`,
+              }}>
+                {orphanSummaries.map(sm => (
+                  <div key={sm.id} style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    padding: "6px 0",
+                    fontSize: "13px",
+                    borderBottom: `1px solid ${t.borderLight}`,
+                  }}>
+                    <span style={{ color: t.text, fontWeight: "500" }}>{sm.name}</span>
+                    <span style={{ color: t.textMuted, fontFamily: mono, fontSize: "12px" }}>
+                      {sm.wordCount}語
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <p style={{ ...s.modalDesc, fontSize: "12px", margin: "0 0 16px" }}>
+                削除しないと、次回復元したときにこれらのデッキが復活します。
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                <button
+                  style={{ ...s.modalConfirmBtn, width: "100%" }}
+                  onClick={() => resolveOrphanChoice("delete")}
+                >
+                  削除して完全同期
+                </button>
+                <button
+                  style={{ ...s.modalCancelBtn, width: "100%" }}
+                  onClick={() => resolveOrphanChoice("keep")}
+                >
+                  削除せずアップロードのみ
+                </button>
+                <button
+                  style={{
+                    ...s.modalCancelBtn,
+                    width: "100%",
+                    background: "transparent",
+                    border: `1px solid ${t.border}`,
+                    color: t.textMuted,
+                  }}
+                  onClick={() => resolveOrphanChoice("cancel")}
+                >
+                  キャンセル
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 復元確認モーダル */}
+        {restorePhase === "confirming" && restoreCloudSummary && (
+          <div style={s.modalOverlay} onClick={() => resolveRestoreChoice("cancel")}>
+            <div style={{ ...s.modal, maxWidth: "380px" }} onClick={e => e.stopPropagation()}>
+              <p style={s.modalTitle}>クラウドから復元</p>
+              <p style={s.modalDesc}>
+                クラウド上のデータで、この端末のデータを完全に上書きします。この操作は取り消せません。
+              </p>
+              <div style={{
+                background: t.inputBg,
+                borderRadius: "10px",
+                padding: "12px 14px",
+                margin: "0 0 10px",
+                border: `1px solid ${t.borderLight}`,
+              }}>
+                <p style={{ fontSize: "11px", fontWeight: "600", color: "#a855f7", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "1px" }}>
+                  復元されるデータ
+                </p>
+                <div style={{ fontSize: "13px", color: t.text, lineHeight: "1.8" }}>
+                  <div>単語帳: {restoreCloudSummary.deckCount}冊({restoreCloudSummary.totalWordCount.toLocaleString()}語)</div>
+                  <div>フォルダ: {restoreCloudSummary.folderCount}つ</div>
+                </div>
+              </div>
+              <div style={{
+                background: "rgba(239, 68, 68, 0.04)",
+                borderRadius: "10px",
+                padding: "12px 14px",
+                margin: "0 0 16px",
+                border: "1px solid rgba(239, 68, 68, 0.12)",
+              }}>
+                <p style={{ fontSize: "11px", fontWeight: "600", color: "#f87171", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "1px" }}>
+                  失われるローカルデータ
+                </p>
+                <div style={{ fontSize: "13px", color: t.text, lineHeight: "1.8" }}>
+                  <div>単語帳: {decks.length}冊({decks.reduce((sum, d) => sum + d.words.length, 0).toLocaleString()}語)</div>
+                  <div>フォルダ: {folders.length}つ</div>
+                </div>
+              </div>
+              <div style={s.modalActions}>
+                <button style={s.modalCancelBtn} onClick={() => resolveRestoreChoice("cancel")}>キャンセル</button>
+                <button style={s.modalConfirmBtn} onClick={() => resolveRestoreChoice("proceed")}>復元を実行</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 復元進捗モーダル */}
+        {(restorePhase === "checking" || restorePhase === "fetching" || restorePhase === "applying") && (
+          <div style={s.modalOverlay}>
+            <div style={{ ...s.modal, maxWidth: "320px" }} onClick={e => e.stopPropagation()}>
+              <p style={s.modalTitle}>復元中</p>
+              <p style={s.modalDesc}>
+                {restorePhase === "checking" && "クラウドのデータを確認中..."}
+                {restorePhase === "fetching" && restoreProgress.message}
+                {restorePhase === "applying" && "適用中..."}
+              </p>
+              {restorePhase === "fetching" && restoreProgress.total > 0 && (
+                <div style={{
+                  width: "100%",
+                  height: "6px",
+                  background: t.divider,
+                  borderRadius: "3px",
+                  overflow: "hidden",
+                  marginBottom: "16px",
+                }}>
+                  <div style={{
+                    height: "100%",
+                    width: `${(restoreProgress.current / restoreProgress.total) * 100}%`,
+                    background: "linear-gradient(90deg, #a855f7, #c084fc)",
+                    borderRadius: "3px",
+                    transition: "width 0.3s ease",
+                  }} />
+                </div>
+              )}
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                <button
+                  style={{
+                    ...s.modalCancelBtn,
+                    flex: "none",
+                    padding: "10px 24px",
+                    background: "transparent",
+                    border: `1px solid ${t.border}`,
+                    color: t.textMuted,
+                  }}
+                  onClick={() => {
+                    if (cloudAbortRef.current) cloudAbortRef.current.abort();
+                    setRestorePhase(null);
+                    setRestoreProgress({ current: 0, total: 0, message: "" });
+                  }}
+                >
+                  キャンセル
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 復元完了モーダル */}
+        {restorePhase === "done" && (
+          <div style={s.modalOverlay}>
+            <div style={{ ...s.modal, maxWidth: "320px", textAlign: "center" }} onClick={e => e.stopPropagation()}>
+              <div style={{
+                width: "56px",
+                height: "56px",
+                borderRadius: "50%",
+                background: "rgba(74, 222, 128, 0.1)",
+                border: "1.5px solid rgba(74, 222, 128, 0.3)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "24px",
+                color: "#4ade80",
+                margin: "0 auto 14px",
+              }}>
+                ✓
+              </div>
+              <p style={{ ...s.modalTitle, marginBottom: "8px" }}>復元が完了しました</p>
+            </div>
+          </div>
+        )}
+
+        {/* 復元エラーモーダル */}
+        {restorePhase === "error" && (
+          <div style={s.modalOverlay} onClick={() => setRestorePhase(null)}>
+            <div style={{ ...s.modal, maxWidth: "320px" }} onClick={e => e.stopPropagation()}>
+              <p style={s.modalTitle}>復元に失敗しました</p>
+              <p style={s.modalDesc}>
+                {restoreError || "通信エラーが発生しました。ネットワークを確認して再度お試しください。"}
+              </p>
+              <p style={{ fontSize: "12px", color: t.textMuted, margin: "0 0 12px", textAlign: "center" }}>
+                ローカルのデータは変更されていません。
+              </p>
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                <button
+                  style={{ ...s.modalCancelBtn, flex: "none", padding: "10px 24px" }}
+                  onClick={() => setRestorePhase(null)}
+                >
+                  閉じる
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1829,13 +2695,13 @@ export default function RapidCycleApp() {
           `}</style>
 
           {/* Card stack */}
-          <div style={s.cardArea}
-            onTouchStart={onTouchStart}
-            onTouchMove={onTouchMove}
-            onTouchEnd={onTouchEnd}
-            onClick={handleTap}
-          >
-            <div style={s.stackContainer}>
+          <div style={s.cardArea}>
+            <div style={s.stackContainer}
+              onTouchStart={onTouchStart}
+              onTouchMove={onTouchMove}
+              onTouchEnd={onTouchEnd}
+              onClick={handleTap}
+            >
               {/* Background cards */}
               {stackCards.slice(1).reverse().map((card, reverseIdx) => {
                 const depth = stackCards.length - 1 - reverseIdx;
@@ -2796,17 +3662,18 @@ function makeStyles(t) { return {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    cursor: "pointer",
-    WebkitTapHighlightColor: "transparent",
     perspective: "1200px",
-    touchAction: "none",
   },
   stackContainer: {
     width: "100%",
+    height: "480px",
     position: "relative",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
+    cursor: "pointer",
+    WebkitTapHighlightColor: "transparent",
+    touchAction: "none",
   },
   stackCard: {
     position: "absolute",
