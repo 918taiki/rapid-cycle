@@ -444,6 +444,9 @@ export default function RapidCycleApp() {
 
   // Cloud backup/restore
   const [cloudStatus, setCloudStatus] = useState(""); // "" | "saving" | "saved" | "restoring" | "restored" | "error"
+  const [manualBackupPhase, setManualBackupPhase] = useState(null); // null | "checking" | "confirming" | "syncing" | "done" | "error"
+  const [orphanSummaries, setOrphanSummaries] = useState([]);
+  const orphanResolveRef = useRef(null);
   const autoRestoredRef = useRef(false);
   const cloudAbortRef = useRef(null); // クラウド通信の重複防止
   const lastAutoBackupAtRef = useRef(0);
@@ -484,6 +487,29 @@ export default function RapidCycleApp() {
     if (!url) throw new Error("no url");
     return fetchJson(url, { action: "deleteDeck", deckId }, signal);
   }, [settings.gasUrl]);
+
+  // クラウドにある全デッキIDを取得
+  const fetchCloudDeckList = useCallback(async (signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    const res = await fetchJson(url, { action: "listDecks" }, signal);
+    return res.deckIds || [];
+  }, [settings.gasUrl]);
+
+  // 指定デッキIDの名前・語数をクラウドから取得
+  const fetchDeckSummaries = useCallback(async (deckIds, signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    if (deckIds.length === 0) return [];
+    const res = await fetchJson(url, { action: "getDeckSummaries", deckIds }, signal);
+    return res.summaries || [];
+  }, [settings.gasUrl]);
+
+  // クラウドにあってローカルにないデッキIDを返す
+  const detectOrphanDeckIds = useCallback((cloudDeckIds) => {
+    const localIds = new Set(decks.map(d => d.id));
+    return cloudDeckIds.filter(id => !localIds.has(id));
+  }, [decks]);
 
   // ─── PENDING HELPERS ───
   const addPendingDeletion = useCallback((deckId) => {
