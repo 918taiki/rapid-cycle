@@ -151,6 +151,73 @@ async function gasRestore(url, signal) {
   return parsed.data;
 }
 
+// 記憶度スコアを計算（コンポーネント外のpure関数）
+function computeMemoryScore(stats, w) {
+  const key = typeof w === "object" ? statsKey(w) : w;
+  const st = stats[key];
+  if (!st || !st.log || st.log.length === 0) return 0;
+  const log = st.log.slice(-100);
+
+  const getIntervalDecay = (hours) => {
+    if (hours < 1) return 0.6;
+    if (hours < 3) return 0.7;
+    if (hours < 6) return 0.8;
+    if (hours < 12) return 0.9;
+    if (hours < 24) return 0.95;
+    return 1.0;
+  };
+
+  let prevSessionEndTime = null;
+  let currentSid = null;
+  let currentTimeDecay = 1.0;
+  const timeDecays = new Array(log.length);
+
+  for (let i = 0; i < log.length; i++) {
+    const entry = log[i];
+    const entryTime = new Date(entry.date).getTime();
+    const sid = entry.sid || `legacy_${i}`;
+
+    if (sid !== currentSid) {
+      if (currentSid !== null) {
+        prevSessionEndTime = new Date(log[i - 1].date).getTime();
+      }
+      if (prevSessionEndTime !== null) {
+        const gapHours = (entryTime - prevSessionEndTime) / 3600000;
+        currentTimeDecay = getIntervalDecay(gapHours);
+      } else {
+        currentTimeDecay = 1.0;
+      }
+      currentSid = sid;
+    }
+    timeDecays[i] = currentTimeDecay;
+  }
+
+  let accuracySum = 0;
+  let peekSum = 0;
+  let totalWeight = 0.5;
+
+  for (let i = 0; i < log.length; i++) {
+    const entry = log[i];
+    const rd = entry.round || 1;
+    const roundDecay = 1 / rd;
+    const timeDecay = timeDecays[i];
+    const weight = roundDecay * timeDecay;
+
+    totalWeight += weight;
+    if (entry.correct) {
+      accuracySum += weight;
+      if (!entry.peeked) {
+        peekSum += weight;
+      }
+    }
+  }
+
+  if (totalWeight === 0) return 0;
+  const accuracy = accuracySum / totalWeight;
+  const peekRatio = peekSum / totalWeight;
+  return accuracy * 0.6 + peekRatio * 0.4;
+}
+
 function parseCSV(text) {
   const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
   if (lines.length === 0) return [];
@@ -270,6 +337,16 @@ export default function RapidCycleApp() {
   const [activeDeck, setActiveDeck] = useState(null);
   const [activeFolder, setActiveFolder] = useState(null);
   const [studySourceLabel, setStudySourceLabel] = useState("");
+
+  // activeDeck内の単語についてスコアを事前計算
+  const memoryScoresMap = useMemo(() => {
+    if (!activeDeck) return new Map();
+    const m = new Map();
+    for (const w of activeDeck.words) {
+      m.set(statsKey(w), computeMemoryScore(stats, w));
+    }
+    return m;
+  }, [activeDeck, stats]);
 
   // Study state
   const [cards, setCards] = useState([]);
@@ -540,74 +617,10 @@ export default function RapidCycleApp() {
   // ─── MEMORY HELPERS ───
   const getMemoryScore = (w) => {
     const key = typeof w === "object" ? statsKey(w) : w;
-    const st = stats[key];
-    if (!st || !st.log || st.log.length === 0) return 0;
-    const log = st.log.slice(-100);
-
-    const getIntervalDecay = (hours) => {
-      if (hours < 1) return 0.6;
-      if (hours < 3) return 0.7;
-      if (hours < 6) return 0.8;
-      if (hours < 12) return 0.9;
-      if (hours < 24) return 0.95;
-      return 1.0;
-    };
-
-    // Group by session ID. Time decay = gap from previous session's end to this session's start.
-    let prevSessionEndTime = null;
-    let currentSid = null;
-    let currentTimeDecay = 1.0;
-    const timeDecays = new Array(log.length);
-
-    for (let i = 0; i < log.length; i++) {
-      const entry = log[i];
-      const entryTime = new Date(entry.date).getTime();
-      const sid = entry.sid || `legacy_${i}`;
-
-      if (sid !== currentSid) {
-        // Close previous session FIRST, then calculate gap
-        if (currentSid !== null) {
-          prevSessionEndTime = new Date(log[i - 1].date).getTime();
-        }
-        // Now calculate decay for the new session
-        if (prevSessionEndTime !== null) {
-          const gapHours = (entryTime - prevSessionEndTime) / 3600000;
-          currentTimeDecay = getIntervalDecay(gapHours);
-        } else {
-          currentTimeDecay = 1.0;
-        }
-        currentSid = sid;
-      }
-      timeDecays[i] = currentTimeDecay;
-    }
-
-    // Weighted average: weight = roundDecay * timeDecay
-    // Correct entries score their full weight, incorrect entries score 0
-    // Divide by totalWeight (not by count) to avoid the "more reviews = lower score" paradox
-    let accuracySum = 0;
-    let peekSum = 0;
-    let totalWeight = 0.5;  // ← 1回目正解時の急上昇を防ぐ仮想ペナルティ
-
-    for (let i = 0; i < log.length; i++) {
-      const entry = log[i];
-      const rd = entry.round || 1;
-      const roundDecay = 1 / rd;
-      const timeDecay = timeDecays[i];
-      const weight = roundDecay * timeDecay;
-
-      totalWeight += weight;
-      if (entry.correct) {
-        accuracySum += weight;
-        if (!entry.peeked) {
-          peekSum += weight;
-        }
-      }
-    }
-
-    if (totalWeight === 0) return 0;
-    const accuracy = accuracySum / totalWeight;
-    const peekRatio = peekSum / totalWeight;
-    return accuracy * 0.6 + peekRatio * 0.4;
+    // activeDeck内の単語はMapからO(1)で取得、それ以外（横断学習等）はフォールバック
+    const cached = memoryScoresMap.get(key);
+    if (cached !== undefined) return cached;
+    return computeMemoryScore(stats, w);
   };
 
   // Returns a reappear multiplier based on memory score
