@@ -518,10 +518,17 @@ export default function RapidCycleApp() {
     const controller = new AbortController();
     cloudAbortRef.current = controller;
 
-    const payload = { decks, stats, folders, settings: { ...settings, gasUrl: undefined }, v: 1 };
     if (opts.silent !== true) setCloudStatus("saving");
     try {
-      await gasBackup(url, payload, controller.signal);
+      // 全デッキを順次送信
+      for (const deck of decks) {
+        if (controller.signal.aborted) return false;
+        await syncDeck(deck, controller.signal);
+      }
+      // meta.json を送信
+      if (!controller.signal.aborted) {
+        await syncMeta(controller.signal);
+      }
       if (opts.silent !== true) {
         setCloudStatus("saved");
         scheduleTimeout(() => setCloudStatus(""), 3000);
@@ -535,7 +542,7 @@ export default function RapidCycleApp() {
       }
       return false;
     }
-  }, [settings, decks, stats, folders, scheduleTimeout]);
+  }, [settings.gasUrl, decks, syncDeck, syncMeta, scheduleTimeout]);
 
   const runCloudRestore = useCallback(async (opts = {}) => {
     const url = settings.gasUrl;
