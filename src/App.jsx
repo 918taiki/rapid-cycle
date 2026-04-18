@@ -443,6 +443,52 @@ export default function RapidCycleApp() {
   useEffect(() => { saveToStorage(STORAGE_KEY_FOLDERS, folders); }, [folders]);
   useEffect(() => { saveToStorage(STORAGE_KEY_PENDING, pending); }, [pending]);
 
+  // Safari-style swipe-back gesture (left edge → right, all screens except study)
+  const swipeBackRef = useRef(null);
+  useEffect(() => {
+    if (view === "detail") {
+      swipeBackRef.current = () => { setView("home"); setEditingIdx(null); setDetailFilter("all"); setDetailCount(null); setIsRenamingDeck(false); };
+    } else if (view === "folder") {
+      swipeBackRef.current = () => setView("home");
+    } else if (view === "crossSetup") {
+      swipeBackRef.current = () => setView(activeFolder ? "folder" : "home");
+    } else if (view === "settings") {
+      swipeBackRef.current = () => setView("home");
+    } else if (view === "import") {
+      swipeBackRef.current = () => { setView("home"); setImportText(""); setDeckName(""); };
+    } else if (view === "result") {
+      swipeBackRef.current = () => setView("home");
+    } else {
+      swipeBackRef.current = null;
+    }
+  }, [view, activeFolder]);
+
+  useEffect(() => {
+    if (view === "study") return;
+    let startX = 0, startY = 0, tracking = false;
+    const onTouchStart = (e) => {
+      const t = e.touches[0];
+      if (t.clientX < 30) { startX = t.clientX; startY = t.clientY; tracking = true; }
+    };
+    const onTouchEnd = (e) => {
+      if (!tracking) return;
+      tracking = false;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - startX;
+      const dy = Math.abs(t.clientY - startY);
+      if (dx > 80 && dy < dx) swipeBackRef.current?.();
+    };
+    const onTouchCancel = () => { tracking = false; };
+    document.addEventListener("touchstart", onTouchStart, { passive: true });
+    document.addEventListener("touchend", onTouchEnd, { passive: true });
+    document.addEventListener("touchcancel", onTouchCancel, { passive: true });
+    return () => {
+      document.removeEventListener("touchstart", onTouchStart);
+      document.removeEventListener("touchend", onTouchEnd);
+      document.removeEventListener("touchcancel", onTouchCancel);
+    };
+  }, [view]);
+
   // Cloud backup/restore
   const [cloudStatus, setCloudStatus] = useState(""); // "" | "saving" | "saved" | "restoring" | "restored" | "error"
   const [manualBackupPhase, setManualBackupPhase] = useState(null); // null | "checking" | "confirming" | "syncing" | "done" | "error"
