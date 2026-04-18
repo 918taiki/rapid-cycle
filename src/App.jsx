@@ -418,6 +418,7 @@ export default function RapidCycleApp() {
   const [editingIdx, setEditingIdx] = useState(null);
   const [editForm, setEditForm] = useState({ word: "", meaning: "", example_en: "", example_ja: "", note: "" });
   const [detailFilter, setDetailFilter] = useState("all");
+  const [detailCount, setDetailCount] = useState(null); // null = 全部
   const [isRenamingDeck, setIsRenamingDeck] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [showQuitModal, setShowQuitModal] = useState(false);
@@ -425,7 +426,7 @@ export default function RapidCycleApp() {
   const [previewFlipped, setPreviewFlipped] = useState(false);
   const [exportCopied, setExportCopied] = useState(false);
   const [crossFilter, setCrossFilter] = useState("all");
-  const [crossCount, setCrossCount] = useState(50);
+  const [crossCount, setCrossCount] = useState(null); // null = 全部
   const [newFolderName, setNewFolderName] = useState("");
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState({});
@@ -1104,7 +1105,7 @@ export default function RapidCycleApp() {
       seen.add(k);
       return true;
     });
-    const selected = shuffle(allWords).slice(0, count);
+    const selected = count === null ? shuffle(allWords) : shuffle(allWords).slice(0, count);
     if (selected.length === 0) return;
     const tempDeck = { id: "__cross__", name: label, words: selected };
     setActiveDeck(tempDeck);
@@ -1597,7 +1598,12 @@ export default function RapidCycleApp() {
       { key: "2", label: "あと少し" },
       { key: "3", label: "定着" },
     ];
-    const countOptions = [10, 20, 30, 50, 100, 200];
+    const countOptions = [
+      { label: "全て", value: null },
+      { label: "10語", value: 10 },
+      { label: "25語", value: 25 },
+      { label: "50語", value: 50 },
+    ];
 
     return (
       <div style={s.shell}>
@@ -1610,6 +1616,24 @@ export default function RapidCycleApp() {
           <p style={{ fontSize: "13px", color: t.textMuted, margin: "0 0 20px" }}>
             {sourceLabel}から{filteredCount}語が対象
           </p>
+
+          {/* Count selector */}
+          <div style={s.formGroup}>
+            <label style={s.label}>出題数</label>
+            <div style={s.filterRow}>
+              {countOptions.map(opt => (
+                <button key={String(opt.value)} onClick={() => setCrossCount(opt.value)}
+                  style={crossCount === opt.value ? s.filterActive : s.filterInactive}>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <p style={{ fontSize: "12px", color: t.textMuted, margin: "4px 0 0" }}>
+              {crossCount === null || filteredCount <= crossCount
+                ? `${filteredCount}語を全て出題`
+                : `${filteredCount}語からランダムに${crossCount}語を出題`}
+            </p>
+          </div>
 
           {/* Memory filter */}
           <div style={s.formGroup}>
@@ -1624,28 +1648,12 @@ export default function RapidCycleApp() {
             </div>
           </div>
 
-          {/* Count selector */}
-          <div style={s.formGroup}>
-            <label style={s.label}>出題数</label>
-            <div style={s.filterRow}>
-              {countOptions.map(n => (
-                <button key={n} onClick={() => setCrossCount(n)}
-                  style={crossCount === n ? s.filterActive : s.filterInactive}>
-                  {n}語
-                </button>
-              ))}
-            </div>
-            <p style={{ fontSize: "12px", color: t.textMuted, margin: "4px 0 0" }}>
-              {filteredCount < crossCount ? `対象が${filteredCount}語のため、全問出題されます` : `${filteredCount}語からランダムに${crossCount}語を出題`}
-            </p>
-          </div>
-
           <button
             style={{ ...s.primaryBtn, marginTop: "20px", opacity: filteredCount > 0 ? 1 : 0.4 }}
             disabled={filteredCount === 0}
             onClick={() => startCrossStudy(sourceDecks, crossFilter, crossCount, `${sourceLabel}（横断）`)}
           >
-            {Math.min(filteredCount, crossCount)}語で学習開始
+            {crossCount === null ? filteredCount : Math.min(filteredCount, crossCount)}語で学習開始
           </button>
         </div>
       </div>
@@ -1754,7 +1762,7 @@ export default function RapidCycleApp() {
       <div style={s.shell}>
         <div style={s.page}>
           <header style={s.subHeader}>
-            <button style={s.backBtn} onClick={() => { setView("home"); setEditingIdx(null); setDetailFilter("all"); setIsRenamingDeck(false); }}>← 戻る</button>
+            <button style={s.backBtn} onClick={() => { setView("home"); setEditingIdx(null); setDetailFilter("all"); setDetailCount(null); setIsRenamingDeck(false); }}>← 戻る</button>
             {isRenamingDeck ? (
               <div style={s.renameRow}>
                 <input
@@ -1793,12 +1801,19 @@ export default function RapidCycleApp() {
             <button
               style={{ ...s.primaryBtn, flex: 1, opacity: filteredWords.length > 0 ? 1 : 0.4 }}
               disabled={filteredWords.length === 0}
-              onClick={() => startStudy(activeDeck, filteredWords)}
+              onClick={() => {
+                const studyWords = detailCount === null || filteredWords.length <= detailCount
+                  ? filteredWords
+                  : shuffle([...filteredWords]).slice(0, detailCount);
+                startStudy(activeDeck, studyWords);
+              }}
             >
-              {detailFilter === "all"
-                ? `学習を開始する`
-                : `${filteredWords.length}語で学習する`
-              }
+              {(() => {
+                const n = detailCount === null || filteredWords.length <= detailCount
+                  ? filteredWords.length
+                  : detailCount;
+                return `${n}語で学習する`;
+              })()}
             </button>
             <button style={{ ...s.exportBtn, borderColor: exportCopied ? "rgba(74, 222, 128, 0.3)" : t.borderLight }} onClick={exportDeck}>
               {exportCopied ? (
@@ -1826,6 +1841,19 @@ export default function RapidCycleApp() {
               </select>
             </div>
           )}
+
+          {/* Count selector */}
+          <div style={{ ...s.filterRow, marginBottom: "6px" }}>
+            {[{ label: "全て", value: null }, { label: "10語", value: 10 }, { label: "25語", value: 25 }, { label: "50語", value: 50 }].map(opt => (
+              <button
+                key={String(opt.value)}
+                onClick={() => setDetailCount(opt.value)}
+                style={detailCount === opt.value ? s.filterActive : s.filterInactive}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
 
           {/* Filter chips */}
           <div style={s.filterRow}>
