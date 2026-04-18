@@ -419,7 +419,7 @@ export default function RapidCycleApp() {
   const [newFolderName, setNewFolderName] = useState("");
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState({});
-  const [deleteConfirm, setDeleteConfirm] = useState(null); // { type: "deck"|"folder", id, name }
+  const [deleteConfirm, setDeleteConfirm] = useState(null); // { type: "deck"|"folder"|"word"|"stats"|"restore", id?, idx?, name }
   const [backupStatus, setBackupStatus] = useState("");
 
   // Persist
@@ -552,6 +552,14 @@ export default function RapidCycleApp() {
     } else if (deleteConfirm.type === "folder") {
       deleteFolder(deleteConfirm.id);
       if (activeFolder && activeFolder.id === deleteConfirm.id) setView("home");
+    } else if (deleteConfirm.type === "word") {
+      const words = activeDeck.words.filter((_, i) => i !== deleteConfirm.idx);
+      updateDeckWords(activeDeck.id, words);
+      setEditingIdx(null);
+    } else if (deleteConfirm.type === "stats") {
+      setStats({});
+    } else if (deleteConfirm.type === "restore") {
+      runCloudRestore();
     }
     setDeleteConfirm(null);
   };
@@ -1026,24 +1034,29 @@ export default function RapidCycleApp() {
             </button>
           </div>
 
-          {/* Delete confirmation modal */}
-          {deleteConfirm && (
-            <div style={s.modalOverlay} onClick={() => setDeleteConfirm(null)}>
-              <div style={s.modal} onClick={e => e.stopPropagation()}>
-                <p style={s.modalTitle}>
-                  {deleteConfirm.type === "folder" ? "フォルダを削除" : "単語帳を削除"}
-                </p>
-                <p style={s.modalDesc}>
-                  「{deleteConfirm.name}」を削除しますか？
-                  {deleteConfirm.type === "folder" && "中の単語帳は削除されず、フォルダ外に移動されます。"}
-                </p>
-                <div style={s.modalActions}>
-                  <button style={s.modalCancelBtn} onClick={() => setDeleteConfirm(null)}>キャンセル</button>
-                  <button style={s.modalConfirmBtn} onClick={executeDelete}>削除する</button>
+          {/* Confirmation modal */}
+          {deleteConfirm && (() => {
+            const labels = {
+              deck:    { title: "単語帳を削除",       desc: `「${deleteConfirm.name}」を削除しますか？この操作は取り消せません。`, confirm: "削除する" },
+              folder:  { title: "フォルダを削除",     desc: `「${deleteConfirm.name}」を削除しますか？中の単語帳は削除されず、フォルダ外に移動されます。`, confirm: "削除する" },
+              word:    { title: "単語を削除",         desc: `「${deleteConfirm.name}」を削除しますか？`, confirm: "削除する" },
+              stats:   { title: "学習記録をリセット", desc: "全ての学習記録をリセットしますか？単語帳は残ります。", confirm: "リセットする" },
+              restore: { title: "クラウドから復元",   desc: "クラウドのデータで現在のデータを上書きしますか？", confirm: "復元する" },
+            };
+            const label = labels[deleteConfirm.type] || labels.deck;
+            return (
+              <div style={s.modalOverlay} onClick={() => setDeleteConfirm(null)}>
+                <div style={s.modal} onClick={e => e.stopPropagation()}>
+                  <p style={s.modalTitle}>{label.title}</p>
+                  <p style={s.modalDesc}>{label.desc}</p>
+                  <div style={s.modalActions}>
+                    <button style={s.modalCancelBtn} onClick={() => setDeleteConfirm(null)}>キャンセル</button>
+                    <button style={s.modalConfirmBtn} onClick={executeDelete}>{label.confirm}</button>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       </div>
     );
@@ -1155,10 +1168,7 @@ export default function RapidCycleApp() {
 
   const deleteWord = (idx) => {
     const w = activeDeck.words[idx];
-    if (!confirm(`「${w.word}」を削除しますか？`)) return;
-    const words = activeDeck.words.filter((_, i) => i !== idx);
-    updateDeckWords(activeDeck.id, words);
-    setEditingIdx(null);
+    setDeleteConfirm({ type: "word", idx, name: w.word });
   };
 
   const renameDeck = () => {
@@ -1495,25 +1505,29 @@ export default function RapidCycleApp() {
             );
           })()}
 
-          {/* Delete confirmation modal */}
-          {deleteConfirm && (
-            <div style={s.modalOverlay} onClick={() => setDeleteConfirm(null)}>
-              <div style={s.modal} onClick={e => e.stopPropagation()}>
-                <p style={s.modalTitle}>
-                  {deleteConfirm.type === "folder" ? "フォルダを削除" : "単語帳を削除"}
-                </p>
-                <p style={s.modalDesc}>
-                  「{deleteConfirm.name}」を削除しますか？
-                  {deleteConfirm.type === "folder" && "中の単語帳は削除されず、フォルダ外に移動されます。"}
-                  {deleteConfirm.type === "deck" && "この操作は取り消せません。"}
-                </p>
-                <div style={s.modalActions}>
-                  <button style={s.modalCancelBtn} onClick={() => setDeleteConfirm(null)}>キャンセル</button>
-                  <button style={s.modalConfirmBtn} onClick={executeDelete}>削除する</button>
+          {/* Confirmation modal */}
+          {deleteConfirm && (() => {
+            const labels = {
+              deck:    { title: "単語帳を削除",       desc: `「${deleteConfirm.name}」を削除しますか？この操作は取り消せません。`, confirm: "削除する" },
+              folder:  { title: "フォルダを削除",     desc: `「${deleteConfirm.name}」を削除しますか？中の単語帳は削除されず、フォルダ外に移動されます。`, confirm: "削除する" },
+              word:    { title: "単語を削除",         desc: `「${deleteConfirm.name}」を削除しますか？`, confirm: "削除する" },
+              stats:   { title: "学習記録をリセット", desc: "全ての学習記録をリセットしますか？単語帳は残ります。", confirm: "リセットする" },
+              restore: { title: "クラウドから復元",   desc: "クラウドのデータで現在のデータを上書きしますか？", confirm: "復元する" },
+            };
+            const label = labels[deleteConfirm.type] || labels.deck;
+            return (
+              <div style={s.modalOverlay} onClick={() => setDeleteConfirm(null)}>
+                <div style={s.modal} onClick={e => e.stopPropagation()}>
+                  <p style={s.modalTitle}>{label.title}</p>
+                  <p style={s.modalDesc}>{label.desc}</p>
+                  <div style={s.modalActions}>
+                    <button style={s.modalCancelBtn} onClick={() => setDeleteConfirm(null)}>キャンセル</button>
+                    <button style={s.modalConfirmBtn} onClick={executeDelete}>{label.confirm}</button>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       </div>
     );
@@ -1646,9 +1660,7 @@ export default function RapidCycleApp() {
                 <button
                   style={{ ...s.ghostBtn, flex: 1, padding: "10px", fontSize: "13px", opacity: settings.gasUrl ? 1 : 0.5 }}
                   disabled={!settings.gasUrl || cloudStatus === "saving" || cloudStatus === "restoring"}
-                  onClick={() => {
-                    if (confirm("クラウドのデータで現在のデータを上書きしますか？")) runCloudRestore();
-                  }}
+                  onClick={() => setDeleteConfirm({ type: "restore", name: "クラウドデータで上書き" })}
                 >
                   {cloudStatus === "restoring" ? "復元中..." : cloudStatus === "restored" ? "✓ 復元完了" : "復元する"}
                 </button>
@@ -1709,11 +1721,7 @@ export default function RapidCycleApp() {
 
           <div style={s.settingsSection}>
             <p style={s.sectionLabel}>データ管理</p>
-            <button style={s.dangerBtn} onClick={() => {
-              if (confirm("全ての学習記録をリセットしますか？単語帳は残ります。")) {
-                setStats({});
-              }
-            }}>
+            <button style={s.dangerBtn} onClick={() => setDeleteConfirm({ type: "stats", name: "学習記録" })}>
               学習記録をリセット
             </button>
           </div>
@@ -1724,6 +1732,30 @@ export default function RapidCycleApp() {
             </button>
           </div>
         </div>
+
+        {/* Confirmation modal */}
+        {deleteConfirm && (() => {
+          const labels = {
+            deck:    { title: "単語帳を削除",       desc: `「${deleteConfirm.name}」を削除しますか？この操作は取り消せません。`, confirm: "削除する" },
+            folder:  { title: "フォルダを削除",     desc: `「${deleteConfirm.name}」を削除しますか？中の単語帳は削除されず、フォルダ外に移動されます。`, confirm: "削除する" },
+            word:    { title: "単語を削除",         desc: `「${deleteConfirm.name}」を削除しますか？`, confirm: "削除する" },
+            stats:   { title: "学習記録をリセット", desc: "全ての学習記録をリセットしますか？単語帳は残ります。", confirm: "リセットする" },
+            restore: { title: "クラウドから復元",   desc: "クラウドのデータで現在のデータを上書きしますか？", confirm: "復元する" },
+          };
+          const label = labels[deleteConfirm.type] || labels.deck;
+          return (
+            <div style={s.modalOverlay} onClick={() => setDeleteConfirm(null)}>
+              <div style={s.modal} onClick={e => e.stopPropagation()}>
+                <p style={s.modalTitle}>{label.title}</p>
+                <p style={s.modalDesc}>{label.desc}</p>
+                <div style={s.modalActions}>
+                  <button style={s.modalCancelBtn} onClick={() => setDeleteConfirm(null)}>キャンセル</button>
+                  <button style={s.modalConfirmBtn} onClick={executeDelete}>{label.confirm}</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   }
