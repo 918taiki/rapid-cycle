@@ -429,7 +429,7 @@ export default function RapidCycleApp() {
   const [newFolderName, setNewFolderName] = useState("");
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState({});
-  const [deleteConfirm, setDeleteConfirm] = useState(null); // { type: "deck"|"folder"|"word"|"stats"|"restore", id?, idx?, name }
+  const [deleteConfirm, setDeleteConfirm] = useState(null); // { type: "deck"|"folder"|"word"|"stats", id?, idx?, name }
   const [backupStatus, setBackupStatus] = useState("");
 
   // pending リスト（P3で本格的に使用。P1ではstate定義のみ）
@@ -447,6 +447,11 @@ export default function RapidCycleApp() {
   const [manualBackupPhase, setManualBackupPhase] = useState(null); // null | "checking" | "confirming" | "syncing" | "done" | "error"
   const [orphanSummaries, setOrphanSummaries] = useState([]);
   const orphanResolveRef = useRef(null);
+  const [restorePhase, setRestorePhase] = useState(null); // null | "checking" | "confirming" | "fetching" | "applying" | "done" | "error"
+  const [restoreCloudSummary, setRestoreCloudSummary] = useState(null);
+  const [restoreProgress, setRestoreProgress] = useState({ current: 0, total: 0, message: "" });
+  const [restoreError, setRestoreError] = useState("");
+  const restoreResolveRef = useRef(null);
   const autoRestoredRef = useRef(false);
   const cloudAbortRef = useRef(null); // クラウド通信の重複防止
   const lastAutoBackupAtRef = useRef(0);
@@ -511,6 +516,30 @@ export default function RapidCycleApp() {
     return cloudDeckIds.filter(id => !localIds.has(id));
   }, [decks]);
 
+  // クラウドの全体概要を取得
+  const fetchCloudSummary = useCallback(async (signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    const res = await fetchJson(url, { action: "getSummary" }, signal);
+    return res.summary;
+  }, [settings.gasUrl]);
+
+  // meta.json 取得
+  const fetchCloudMeta = useCallback(async (signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    const res = await fetchJson(url, { action: "getMeta" }, signal);
+    return res.data;
+  }, [settings.gasUrl]);
+
+  // デッキ1つ取得
+  const fetchCloudDeck = useCallback(async (deckId, signal) => {
+    const url = settings.gasUrl;
+    if (!url) throw new Error("no url");
+    const res = await fetchJson(url, { action: "getDeck", deckId }, signal);
+    return res.data;
+  }, [settings.gasUrl]);
+
   // ─── PENDING HELPERS ───
   const addPendingDeletion = useCallback((deckId) => {
     setPending(prev => ({
@@ -566,6 +595,10 @@ export default function RapidCycleApp() {
         orphanResolveRef.current("cancel");
         orphanResolveRef.current = null;
       }
+      if (restoreResolveRef.current) {
+        restoreResolveRef.current("cancel");
+        restoreResolveRef.current = null;
+      }
     };
   }, []);
 
@@ -582,6 +615,22 @@ export default function RapidCycleApp() {
     if (orphanResolveRef.current) {
       orphanResolveRef.current(choice);
       orphanResolveRef.current = null;
+    }
+  }, []);
+
+  // 復元確認モーダルを表示し、ユーザーの選択を待つ（"proceed" | "cancel"）
+  const showRestoreConfirmModal = useCallback((cloudSummary) => {
+    return new Promise((resolve) => {
+      setRestoreCloudSummary(cloudSummary);
+      setRestorePhase("confirming");
+      restoreResolveRef.current = resolve;
+    });
+  }, []);
+
+  const resolveRestoreChoice = useCallback((choice) => {
+    if (restoreResolveRef.current) {
+      restoreResolveRef.current(choice);
+      restoreResolveRef.current = null;
     }
   }, []);
 
@@ -690,48 +739,112 @@ export default function RapidCycleApp() {
     const controller = new AbortController();
     cloudAbortRef.current = controller;
 
-    if (opts.silent !== true) setCloudStatus("restoring");
-    try {
-      // 1. meta.json 取得
-      const metaRes = await fetchJson(url, { action: "getMeta" }, controller.signal);
-      const meta = metaRes.data;
+    // silent モード（起動時の自動復元）は従来通りの簡易フロー
+    if (opts.silent === true) {
+      try {
+        const metaRes = await fetchJson(url, { action: "getMeta" }, controller.signal);
+        const meta = metaRes.data;
+        const listRes = await fetchJson(url, { action: "listDecks" }, controller.signal);
+        const deckIds = listRes.deckIds || [];
+        const fetchedDecks = [];
+        const fetchedStats = {};
+        for (const deckId of deckIds) {
+          if (controller.signal.aborted) return false;
+          const data = await fetchCloudDeck(deckId, controller.signal);
+          if (data) {
+            fetchedDecks.push(data.deck);
+            Object.assign(fetchedStats, data.stats || {});
+          }
+        }
+        setDecks(fetchedDecks);
+        setStats(fetchedStats);
+        setFolders((meta && meta.folders) || []);
+        setPending(DEFAULT_PENDING);
+        return true;
+      } catch (err) {
+        if (err && err.name === "AbortError") return false;
+        return false;
+      }
+    }
 
-      // 2. デッキ一覧取得
+    try {
+      // フェーズ1: クラウド概要取得
+      setRestorePhase("checking");
+      setRestoreError("");
+      const cloudSummary = await fetchCloudSummary(controller.signal);
+
+      // フェーズ2: ユーザー確認
+      const choice = await showRestoreConfirmModal(cloudSummary);
+      if (choice === "cancel") {
+        setRestorePhase(null);
+        setRestoreCloudSummary(null);
+        return false;
+      }
+
+      // フェーズ3: 取得処理（ローカルは一切変更しない）
+      setRestorePhase("fetching");
+      setRestoreProgress({ current: 0, total: 0, message: "メタ情報を取得中..." });
+
+      const meta = await fetchCloudMeta(controller.signal);
+      if (controller.signal.aborted) return false;
+
+      setRestoreProgress({ current: 0, total: 0, message: "単語帳一覧を取得中..." });
       const listRes = await fetchJson(url, { action: "listDecks" }, controller.signal);
       const deckIds = listRes.deckIds || [];
+      if (controller.signal.aborted) return false;
 
-      // 3. 各デッキを順次取得
       const fetchedDecks = [];
       const fetchedStats = {};
-      for (const deckId of deckIds) {
+      for (let i = 0; i < deckIds.length; i++) {
         if (controller.signal.aborted) return false;
-        const deckRes = await fetchJson(url, { action: "getDeck", deckId }, controller.signal);
-        if (deckRes.data) {
-          fetchedDecks.push(deckRes.data.deck);
-          Object.assign(fetchedStats, deckRes.data.stats);
-        }
+        setRestoreProgress({
+          current: i + 1,
+          total: deckIds.length,
+          message: `単語帳を取得中... (${i + 1}/${deckIds.length})`,
+        });
+        const data = await fetchCloudDeck(deckIds[i], controller.signal);
+        if (!data) throw new Error(`デッキ ${deckIds[i]} の取得に失敗しました`);
+        fetchedDecks.push(data.deck);
+        Object.assign(fetchedStats, data.stats || {});
       }
 
-      // 4. ローカル上書き（P1では単純適用。P5でトランザクション化）
+      // フェーズ4: 一括適用（トランザクション的）
+      setRestorePhase("applying");
+      setRestoreProgress({ current: 0, total: 0, message: "適用中..." });
       setDecks(fetchedDecks);
       setStats(fetchedStats);
-      if (meta && meta.folders) setFolders(meta.folders);
+      setFolders((meta && meta.folders) || []);
       setPending(DEFAULT_PENDING);
 
-      if (opts.silent !== true) {
-        setCloudStatus("restored");
-        scheduleTimeout(() => setCloudStatus(""), 3000);
-      }
+      // フェーズ5: 完了
+      setRestorePhase("done");
+      scheduleTimeout(() => {
+        setRestorePhase(null);
+        setRestoreCloudSummary(null);
+        setRestoreProgress({ current: 0, total: 0, message: "" });
+      }, 3000);
       return true;
     } catch (err) {
-      if (err && err.name === "AbortError") return false;
-      if (opts.silent !== true) {
-        setCloudStatus("error");
-        scheduleTimeout(() => setCloudStatus(""), 3000);
+      if (err && err.name === "AbortError") {
+        setRestorePhase(null);
+        setRestoreCloudSummary(null);
+        return false;
       }
+      console.warn("runCloudRestore failed", err);
+      setRestoreError(err.message || "復元に失敗しました");
+      setRestorePhase("error");
+      scheduleTimeout(() => {
+        setRestorePhase(null);
+        setRestoreCloudSummary(null);
+        setRestoreError("");
+      }, 5000);
       return false;
     }
-  }, [settings.gasUrl, scheduleTimeout]);
+  }, [
+    settings.gasUrl,
+    fetchCloudSummary, showRestoreConfirmModal, fetchCloudMeta, fetchCloudDeck,
+    scheduleTimeout,
+  ]);
 
   // Auto-restore on startup: if gasUrl is set and local data is empty
   useEffect(() => {
@@ -940,8 +1053,6 @@ export default function RapidCycleApp() {
       scheduleDeckSync({ ...activeDeck, words });
     } else if (deleteConfirm.type === "stats") {
       setStats({});
-    } else if (deleteConfirm.type === "restore") {
-      runCloudRestore();
     }
     setDeleteConfirm(null);
   };
@@ -1447,7 +1558,6 @@ export default function RapidCycleApp() {
               folder:  { title: "フォルダを削除",     desc: `「${deleteConfirm.name}」を削除しますか？中の単語帳は削除されず、フォルダ外に移動されます。`, confirm: "削除する" },
               word:    { title: "単語を削除",         desc: `「${deleteConfirm.name}」を削除しますか？`, confirm: "削除する" },
               stats:   { title: "学習記録をリセット", desc: "全ての学習記録をリセットしますか？単語帳は残ります。", confirm: "リセットする" },
-              restore: { title: "クラウドから復元",   desc: "クラウドのデータで現在のデータを上書きしますか？", confirm: "復元する" },
             };
             const label = labels[deleteConfirm.type] || labels.deck;
             return (
@@ -1920,7 +2030,6 @@ export default function RapidCycleApp() {
               folder:  { title: "フォルダを削除",     desc: `「${deleteConfirm.name}」を削除しますか？中の単語帳は削除されず、フォルダ外に移動されます。`, confirm: "削除する" },
               word:    { title: "単語を削除",         desc: `「${deleteConfirm.name}」を削除しますか？`, confirm: "削除する" },
               stats:   { title: "学習記録をリセット", desc: "全ての学習記録をリセットしますか？単語帳は残ります。", confirm: "リセットする" },
-              restore: { title: "クラウドから復元",   desc: "クラウドのデータで現在のデータを上書きしますか？", confirm: "復元する" },
             };
             const label = labels[deleteConfirm.type] || labels.deck;
             return (
@@ -2072,10 +2181,15 @@ export default function RapidCycleApp() {
                 </button>
                 <button
                   style={{ ...s.ghostBtn, flex: 1, padding: "10px", fontSize: "13px", opacity: settings.gasUrl ? 1 : 0.5 }}
-                  disabled={!settings.gasUrl || cloudStatus === "saving" || cloudStatus === "restoring"}
-                  onClick={() => setDeleteConfirm({ type: "restore", name: "クラウドデータで上書き" })}
+                  disabled={!settings.gasUrl || restorePhase !== null || manualBackupPhase !== null}
+                  onClick={() => runCloudRestore()}
                 >
-                  {cloudStatus === "restoring" ? "復元中..." : cloudStatus === "restored" ? "✓ 復元完了" : "復元する"}
+                  {restorePhase === "checking" && "確認中..."}
+                  {restorePhase === "fetching" && "取得中..."}
+                  {restorePhase === "applying" && "適用中..."}
+                  {restorePhase === "done" && "✓ 復元完了"}
+                  {restorePhase === "error" && "エラー"}
+                  {(restorePhase === null || restorePhase === "confirming") && "復元する"}
                 </button>
               </div>
               {cloudStatus === "error" && (
@@ -2229,6 +2343,150 @@ export default function RapidCycleApp() {
                   onClick={() => resolveOrphanChoice("cancel")}
                 >
                   キャンセル
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 復元確認モーダル */}
+        {restorePhase === "confirming" && restoreCloudSummary && (
+          <div style={s.modalOverlay} onClick={() => resolveRestoreChoice("cancel")}>
+            <div style={{ ...s.modal, maxWidth: "380px" }} onClick={e => e.stopPropagation()}>
+              <p style={s.modalTitle}>クラウドから復元</p>
+              <p style={s.modalDesc}>
+                クラウド上のデータで、この端末のデータを完全に上書きします。この操作は取り消せません。
+              </p>
+              <div style={{
+                background: t.inputBg,
+                borderRadius: "10px",
+                padding: "12px 14px",
+                margin: "0 0 10px",
+                border: `1px solid ${t.borderLight}`,
+              }}>
+                <p style={{ fontSize: "11px", fontWeight: "600", color: "#a855f7", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "1px" }}>
+                  復元されるデータ
+                </p>
+                <div style={{ fontSize: "13px", color: t.text, lineHeight: "1.8" }}>
+                  <div>単語帳: {restoreCloudSummary.deckCount}冊({restoreCloudSummary.totalWordCount.toLocaleString()}語)</div>
+                  <div>フォルダ: {restoreCloudSummary.folderCount}つ</div>
+                </div>
+              </div>
+              <div style={{
+                background: "rgba(239, 68, 68, 0.04)",
+                borderRadius: "10px",
+                padding: "12px 14px",
+                margin: "0 0 16px",
+                border: "1px solid rgba(239, 68, 68, 0.12)",
+              }}>
+                <p style={{ fontSize: "11px", fontWeight: "600", color: "#f87171", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "1px" }}>
+                  失われるローカルデータ
+                </p>
+                <div style={{ fontSize: "13px", color: t.text, lineHeight: "1.8" }}>
+                  <div>単語帳: {decks.length}冊({decks.reduce((sum, d) => sum + d.words.length, 0).toLocaleString()}語)</div>
+                  <div>フォルダ: {folders.length}つ</div>
+                </div>
+              </div>
+              <div style={s.modalActions}>
+                <button style={s.modalCancelBtn} onClick={() => resolveRestoreChoice("cancel")}>キャンセル</button>
+                <button style={s.modalConfirmBtn} onClick={() => resolveRestoreChoice("proceed")}>復元を実行</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 復元進捗モーダル */}
+        {(restorePhase === "checking" || restorePhase === "fetching" || restorePhase === "applying") && (
+          <div style={s.modalOverlay}>
+            <div style={{ ...s.modal, maxWidth: "320px" }} onClick={e => e.stopPropagation()}>
+              <p style={s.modalTitle}>復元中</p>
+              <p style={s.modalDesc}>
+                {restorePhase === "checking" && "クラウドのデータを確認中..."}
+                {restorePhase === "fetching" && restoreProgress.message}
+                {restorePhase === "applying" && "適用中..."}
+              </p>
+              {restorePhase === "fetching" && restoreProgress.total > 0 && (
+                <div style={{
+                  width: "100%",
+                  height: "6px",
+                  background: t.divider,
+                  borderRadius: "3px",
+                  overflow: "hidden",
+                  marginBottom: "16px",
+                }}>
+                  <div style={{
+                    height: "100%",
+                    width: `${(restoreProgress.current / restoreProgress.total) * 100}%`,
+                    background: "linear-gradient(90deg, #a855f7, #c084fc)",
+                    borderRadius: "3px",
+                    transition: "width 0.3s ease",
+                  }} />
+                </div>
+              )}
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                <button
+                  style={{
+                    ...s.modalCancelBtn,
+                    flex: "none",
+                    padding: "10px 24px",
+                    background: "transparent",
+                    border: `1px solid ${t.border}`,
+                    color: t.textMuted,
+                  }}
+                  onClick={() => {
+                    if (cloudAbortRef.current) cloudAbortRef.current.abort();
+                    setRestorePhase(null);
+                    setRestoreProgress({ current: 0, total: 0, message: "" });
+                  }}
+                >
+                  キャンセル
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 復元完了モーダル */}
+        {restorePhase === "done" && (
+          <div style={s.modalOverlay}>
+            <div style={{ ...s.modal, maxWidth: "320px", textAlign: "center" }} onClick={e => e.stopPropagation()}>
+              <div style={{
+                width: "56px",
+                height: "56px",
+                borderRadius: "50%",
+                background: "rgba(74, 222, 128, 0.1)",
+                border: "1.5px solid rgba(74, 222, 128, 0.3)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "24px",
+                color: "#4ade80",
+                margin: "0 auto 14px",
+              }}>
+                ✓
+              </div>
+              <p style={{ ...s.modalTitle, marginBottom: "8px" }}>復元が完了しました</p>
+            </div>
+          </div>
+        )}
+
+        {/* 復元エラーモーダル */}
+        {restorePhase === "error" && (
+          <div style={s.modalOverlay} onClick={() => setRestorePhase(null)}>
+            <div style={{ ...s.modal, maxWidth: "320px" }} onClick={e => e.stopPropagation()}>
+              <p style={s.modalTitle}>復元に失敗しました</p>
+              <p style={s.modalDesc}>
+                {restoreError || "通信エラーが発生しました。ネットワークを確認して再度お試しください。"}
+              </p>
+              <p style={{ fontSize: "12px", color: t.textMuted, margin: "0 0 12px", textAlign: "center" }}>
+                ローカルのデータは変更されていません。
+              </p>
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                <button
+                  style={{ ...s.modalCancelBtn, flex: "none", padding: "10px 24px" }}
+                  onClick={() => setRestorePhase(null)}
+                >
+                  閉じる
                 </button>
               </div>
             </div>
