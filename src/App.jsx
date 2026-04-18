@@ -614,6 +614,22 @@ export default function RapidCycleApp() {
     }
   }, []);
 
+  // 復元確認モーダルを表示し、ユーザーの選択を待つ（"proceed" | "cancel"）
+  const showRestoreConfirmModal = useCallback((cloudSummary) => {
+    return new Promise((resolve) => {
+      setRestoreCloudSummary(cloudSummary);
+      setRestorePhase("confirming");
+      restoreResolveRef.current = resolve;
+    });
+  }, []);
+
+  const resolveRestoreChoice = useCallback((choice) => {
+    if (restoreResolveRef.current) {
+      restoreResolveRef.current(choice);
+      restoreResolveRef.current = null;
+    }
+  }, []);
+
   const runCloudBackup = useCallback(async (opts = {}) => {
     const url = settings.gasUrl;
     if (!url) return false;
