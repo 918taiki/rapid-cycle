@@ -484,6 +484,47 @@ export default function RapidCycleApp() {
     return fetchJson(url, { action: "deleteDeck", deckId }, signal);
   }, [settings.gasUrl]);
 
+  // ─── PENDING HELPERS ───
+  const addPendingDeletion = useCallback((deckId) => {
+    setPending(prev => ({
+      ...prev,
+      deletedDeckIds: prev.deletedDeckIds.includes(deckId)
+        ? prev.deletedDeckIds
+        : [...prev.deletedDeckIds, deckId],
+      dirtyDeckIds: prev.dirtyDeckIds.filter(id => id !== deckId),
+    }));
+  }, []);
+
+  const addPendingDirtyDeck = useCallback((deckId) => {
+    setPending(prev => {
+      if (prev.deletedDeckIds.includes(deckId)) return prev;
+      if (prev.dirtyDeckIds.includes(deckId)) return prev;
+      return { ...prev, dirtyDeckIds: [...prev.dirtyDeckIds, deckId] };
+    });
+  }, []);
+
+  const markMetaDirty = useCallback(() => {
+    setPending(prev => prev.metaDirty ? prev : { ...prev, metaDirty: true });
+  }, []);
+
+  const clearPendingDeletion = useCallback((deckId) => {
+    setPending(prev => ({
+      ...prev,
+      deletedDeckIds: prev.deletedDeckIds.filter(id => id !== deckId),
+    }));
+  }, []);
+
+  const clearPendingDirtyDeck = useCallback((deckId) => {
+    setPending(prev => ({
+      ...prev,
+      dirtyDeckIds: prev.dirtyDeckIds.filter(id => id !== deckId),
+    }));
+  }, []);
+
+  const clearMetaDirty = useCallback(() => {
+    setPending(prev => prev.metaDirty ? { ...prev, metaDirty: false } : prev);
+  }, []);
+
   const runCloudBackup = useCallback(async (opts = {}) => {
     const url = settings.gasUrl;
     if (!url) return false;
