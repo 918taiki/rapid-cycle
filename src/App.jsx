@@ -1451,6 +1451,7 @@ export default function RapidCycleApp() {
             </button>
           </header>
 
+          <div style={s.scrollWrapper}>
           <div style={s.scrollArea}>
           {/* Cross-study button */}
           {totalWords > 0 && (
@@ -1538,7 +1539,9 @@ export default function RapidCycleApp() {
               </button>
             )}
           </div>
-          </div>{/* scrollArea */}
+          </div>
+          <div style={s.scrollFade} />
+          </div>{/* scrollWrapper */}
         </div>
       </div>
     );
@@ -1557,6 +1560,7 @@ export default function RapidCycleApp() {
             <h2 style={s.subTitle}>📁 {activeFolder.name}</h2>
           </header>
 
+          <div style={s.scrollWrapper}>
           <div style={s.scrollArea}>
           {/* Folder cross-study */}
           {folderWords > 0 && (
@@ -1595,7 +1599,9 @@ export default function RapidCycleApp() {
               })}
             </div>
           )}
-          </div>{/* scrollArea */}
+          </div>
+          <div style={s.scrollFade} />
+          </div>{/* scrollWrapper */}
 
           <div style={{ paddingTop: "12px", paddingBottom: "env(safe-area-inset-bottom, 12px)" }}>
             <button style={s.smallDangerBtn} onClick={() => setDeleteConfirm({ type: "folder", id: activeFolder.id, name: activeFolder.name })}>
@@ -1663,6 +1669,7 @@ export default function RapidCycleApp() {
             <h2 style={s.subTitle}>横断学習</h2>
           </header>
 
+          <div style={s.scrollWrapper}>
           <div style={s.scrollArea}>
           <p style={{ fontSize: "13px", color: t.textMuted, margin: "0 0 20px" }}>
             {sourceLabel}から{filteredCount}語が対象
@@ -1706,7 +1713,9 @@ export default function RapidCycleApp() {
           >
             {crossCount === null ? filteredCount : Math.min(filteredCount, crossCount)}語で学習開始
           </button>
-          </div>{/* scrollArea */}
+          </div>
+          <div style={s.scrollFade} />
+          </div>{/* scrollWrapper */}
         </div>
       </div>
     );
@@ -1925,6 +1934,7 @@ export default function RapidCycleApp() {
           </div>
 
           {/* Word list */}
+          <div style={s.scrollWrapper}>
           <div style={s.scrollArea}>
           <div style={s.wordList}>
             {filteredWords.length === 0 && (
@@ -2008,7 +2018,9 @@ export default function RapidCycleApp() {
               この単語帳を削除
             </button>
           </div>
-          </div>{/* scrollArea */}
+          </div>
+          <div style={s.scrollFade} />
+          </div>{/* scrollWrapper */}
 
           {/* Card preview modal */}
           {previewIdx !== null && words[previewIdx] && (() => {
@@ -2140,6 +2152,7 @@ export default function RapidCycleApp() {
             <h2 style={s.subTitle}>設定</h2>
           </header>
 
+          <div style={s.scrollWrapper}>
           <div style={s.scrollArea}>
           <div style={s.settingsSection}>
             <p style={s.sectionLabel}>テーマ</p>
@@ -2339,7 +2352,9 @@ export default function RapidCycleApp() {
               デフォルトに戻す
             </button>
           </div>
-          </div>{/* scrollArea */}
+          </div>
+          <div style={s.scrollFade} />
+          </div>{/* scrollWrapper */}
         </div>
 
         {/* Confirmation modal */}
@@ -2589,6 +2604,7 @@ export default function RapidCycleApp() {
             <h2 style={s.subTitle}>単語帳を追加</h2>
           </header>
 
+          <div style={s.scrollWrapper}>
           <div style={s.scrollArea}>
           <div style={s.formGroup}>
             <label style={s.label}>単語帳の名前</label>
@@ -2649,7 +2665,9 @@ export default function RapidCycleApp() {
           >
             {preview.length}語を保存して開始
           </button>
-          </div>{/* scrollArea */}
+          </div>
+          <div style={s.scrollFade} />
+          </div>{/* scrollWrapper */}
         </div>
       </div>
     );
@@ -2923,11 +2941,24 @@ function makeStyles(t) { return {
     flexDirection: "column",
     overflow: "hidden",
   },
-  scrollArea: {
+  scrollWrapper: {
+    position: "relative",
     flex: 1,
+    minHeight: 0,
+    overflow: "hidden",
+  },
+  scrollArea: {
+    height: "100%",
     overflowY: "auto",
     WebkitOverflowScrolling: "touch",
     paddingBottom: "env(safe-area-inset-bottom, 20px)",
+  },
+  scrollFade: {
+    position: "absolute",
+    inset: 0,
+    pointerEvents: "none",
+    background: `linear-gradient(to bottom, ${t.bg} 0px, transparent 20px, transparent calc(100% - 48px), ${t.bg} 100%)`,
+    zIndex: 1,
   },
 
   // ── Home ──
