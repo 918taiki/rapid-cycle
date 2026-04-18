@@ -2279,6 +2279,150 @@ export default function RapidCycleApp() {
             </div>
           </div>
         )}
+
+        {/* 復元確認モーダル */}
+        {restorePhase === "confirming" && restoreCloudSummary && (
+          <div style={s.modalOverlay} onClick={() => resolveRestoreChoice("cancel")}>
+            <div style={{ ...s.modal, maxWidth: "380px" }} onClick={e => e.stopPropagation()}>
+              <p style={s.modalTitle}>クラウドから復元</p>
+              <p style={s.modalDesc}>
+                クラウド上のデータで、この端末のデータを完全に上書きします。この操作は取り消せません。
+              </p>
+              <div style={{
+                background: t.inputBg,
+                borderRadius: "10px",
+                padding: "12px 14px",
+                margin: "0 0 10px",
+                border: `1px solid ${t.borderLight}`,
+              }}>
+                <p style={{ fontSize: "11px", fontWeight: "600", color: "#a855f7", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "1px" }}>
+                  復元されるデータ
+                </p>
+                <div style={{ fontSize: "13px", color: t.text, lineHeight: "1.8" }}>
+                  <div>単語帳: {restoreCloudSummary.deckCount}冊({restoreCloudSummary.totalWordCount.toLocaleString()}語)</div>
+                  <div>フォルダ: {restoreCloudSummary.folderCount}つ</div>
+                </div>
+              </div>
+              <div style={{
+                background: "rgba(239, 68, 68, 0.04)",
+                borderRadius: "10px",
+                padding: "12px 14px",
+                margin: "0 0 16px",
+                border: "1px solid rgba(239, 68, 68, 0.12)",
+              }}>
+                <p style={{ fontSize: "11px", fontWeight: "600", color: "#f87171", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "1px" }}>
+                  失われるローカルデータ
+                </p>
+                <div style={{ fontSize: "13px", color: t.text, lineHeight: "1.8" }}>
+                  <div>単語帳: {decks.length}冊({decks.reduce((sum, d) => sum + d.words.length, 0).toLocaleString()}語)</div>
+                  <div>フォルダ: {folders.length}つ</div>
+                </div>
+              </div>
+              <div style={s.modalActions}>
+                <button style={s.modalCancelBtn} onClick={() => resolveRestoreChoice("cancel")}>キャンセル</button>
+                <button style={s.modalConfirmBtn} onClick={() => resolveRestoreChoice("proceed")}>復元を実行</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 復元進捗モーダル */}
+        {(restorePhase === "checking" || restorePhase === "fetching" || restorePhase === "applying") && (
+          <div style={s.modalOverlay}>
+            <div style={{ ...s.modal, maxWidth: "320px" }} onClick={e => e.stopPropagation()}>
+              <p style={s.modalTitle}>復元中</p>
+              <p style={s.modalDesc}>
+                {restorePhase === "checking" && "クラウドのデータを確認中..."}
+                {restorePhase === "fetching" && restoreProgress.message}
+                {restorePhase === "applying" && "適用中..."}
+              </p>
+              {restorePhase === "fetching" && restoreProgress.total > 0 && (
+                <div style={{
+                  width: "100%",
+                  height: "6px",
+                  background: t.divider,
+                  borderRadius: "3px",
+                  overflow: "hidden",
+                  marginBottom: "16px",
+                }}>
+                  <div style={{
+                    height: "100%",
+                    width: `${(restoreProgress.current / restoreProgress.total) * 100}%`,
+                    background: "linear-gradient(90deg, #a855f7, #c084fc)",
+                    borderRadius: "3px",
+                    transition: "width 0.3s ease",
+                  }} />
+                </div>
+              )}
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                <button
+                  style={{
+                    ...s.modalCancelBtn,
+                    flex: "none",
+                    padding: "10px 24px",
+                    background: "transparent",
+                    border: `1px solid ${t.border}`,
+                    color: t.textMuted,
+                  }}
+                  onClick={() => {
+                    if (cloudAbortRef.current) cloudAbortRef.current.abort();
+                    setRestorePhase(null);
+                    setRestoreProgress({ current: 0, total: 0, message: "" });
+                  }}
+                >
+                  キャンセル
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 復元完了モーダル */}
+        {restorePhase === "done" && (
+          <div style={s.modalOverlay}>
+            <div style={{ ...s.modal, maxWidth: "320px", textAlign: "center" }} onClick={e => e.stopPropagation()}>
+              <div style={{
+                width: "56px",
+                height: "56px",
+                borderRadius: "50%",
+                background: "rgba(74, 222, 128, 0.1)",
+                border: "1.5px solid rgba(74, 222, 128, 0.3)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "24px",
+                color: "#4ade80",
+                margin: "0 auto 14px",
+              }}>
+                ✓
+              </div>
+              <p style={{ ...s.modalTitle, marginBottom: "8px" }}>復元が完了しました</p>
+            </div>
+          </div>
+        )}
+
+        {/* 復元エラーモーダル */}
+        {restorePhase === "error" && (
+          <div style={s.modalOverlay} onClick={() => setRestorePhase(null)}>
+            <div style={{ ...s.modal, maxWidth: "320px" }} onClick={e => e.stopPropagation()}>
+              <p style={s.modalTitle}>復元に失敗しました</p>
+              <p style={s.modalDesc}>
+                {restoreError || "通信エラーが発生しました。ネットワークを確認して再度お試しください。"}
+              </p>
+              <p style={{ fontSize: "12px", color: t.textMuted, margin: "0 0 12px", textAlign: "center" }}>
+                ローカルのデータは変更されていません。
+              </p>
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                <button
+                  style={{ ...s.modalCancelBtn, flex: "none", padding: "10px 24px" }}
+                  onClick={() => setRestorePhase(null)}
+                >
+                  閉じる
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
