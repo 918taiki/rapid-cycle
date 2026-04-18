@@ -1148,9 +1148,10 @@ export default function RapidCycleApp() {
   };
 
   // ─── STUDY LOGIC ───
-  const startStudy = (deck) => {
+  const startStudy = (deck, studyWords) => {
     setActiveDeck(deck);
-    const shuffled = shuffle(deck.words);
+    const sourceWords = studyWords !== undefined ? studyWords : deck.words;
+    const shuffled = shuffle(sourceWords);
     setCards(shuffled);
     setCurrentIdx(0);
     setFlipped(false);
@@ -1792,10 +1793,7 @@ export default function RapidCycleApp() {
             <button
               style={{ ...s.primaryBtn, flex: 1, opacity: filteredWords.length > 0 ? 1 : 0.4 }}
               disabled={filteredWords.length === 0}
-              onClick={() => {
-                const tempDeck = { ...activeDeck, words: filteredWords };
-                startStudy(tempDeck);
-              }}
+              onClick={() => startStudy(activeDeck, filteredWords)}
             >
               {detailFilter === "all"
                 ? `学習を開始する`
