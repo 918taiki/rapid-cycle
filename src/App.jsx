@@ -6,6 +6,7 @@ const STORAGE_KEY_STATS = "rc_stats";
 const STORAGE_KEY_SETTINGS = "rc_settings";
 const STORAGE_KEY_FOLDERS = "rc_folders";
 const SWIPE_THRESHOLD = 60;
+const CLOUD_BACKUP_MIN_INTERVAL_MS = 5 * 60 * 1000;
 
 const DEFAULT_SETTINGS = {
   reappearR1: 0.33,
@@ -113,7 +114,7 @@ function extractJson(text) {
   return null;
 }
 
-async function gasBackup(url, payload) {
+async function gasBackup(url, payload, signal) {
   if (!url) throw new Error("no url");
   const body = JSON.stringify(payload);
   try {
@@ -122,15 +123,17 @@ async function gasBackup(url, payload) {
       redirect: "follow",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
       body,
+      signal,
     });
     const text = await res.text();
     const parsed = extractJson(text);
     if (parsed && parsed.ok) return parsed;
     throw new Error("post failed");
-  } catch {
+  } catch (err) {
+    if (err && err.name === "AbortError") throw err;
     // Fallback: GET with data param (URL length permitting)
     const getUrl = url + (url.includes("?") ? "&" : "?") + "data=" + encodeURIComponent(body);
-    const res = await fetch(getUrl, { method: "GET", redirect: "follow" });
+    const res = await fetch(getUrl, { method: "GET", redirect: "follow", signal });
     const text = await res.text();
     const parsed = extractJson(text);
     if (parsed && parsed.ok) return parsed;
@@ -138,9 +141,9 @@ async function gasBackup(url, payload) {
   }
 }
 
-async function gasRestore(url) {
+async function gasRestore(url, signal) {
   if (!url) throw new Error("no url");
-  const res = await fetch(url, { method: "GET", redirect: "follow" });
+  const res = await fetch(url, { method: "GET", redirect: "follow", signal });
   const text = await res.text();
   const parsed = extractJson(text);
   if (!parsed || !parsed.ok) throw new Error("restore failed");
@@ -344,20 +347,28 @@ export default function RapidCycleApp() {
   // Cloud backup/restore
   const [cloudStatus, setCloudStatus] = useState(""); // "" | "saving" | "saved" | "restoring" | "restored" | "error"
   const autoRestoredRef = useRef(false);
+  const cloudAbortRef = useRef(null); // クラウド通信の重複防止
+  const lastAutoBackupAtRef = useRef(0);
 
   const runCloudBackup = useCallback(async (opts = {}) => {
     const url = settings.gasUrl;
     if (!url) return false;
+
+    if (cloudAbortRef.current) cloudAbortRef.current.abort();
+    const controller = new AbortController();
+    cloudAbortRef.current = controller;
+
     const payload = { decks, stats, folders, settings: { ...settings, gasUrl: undefined }, v: 1 };
     if (opts.silent !== true) setCloudStatus("saving");
     try {
-      await gasBackup(url, payload);
+      await gasBackup(url, payload, controller.signal);
       if (opts.silent !== true) {
         setCloudStatus("saved");
         scheduleTimeout(() => setCloudStatus(""), 3000);
       }
       return true;
-    } catch {
+    } catch (err) {
+      if (err && err.name === "AbortError") return false;
       if (opts.silent !== true) {
         setCloudStatus("error");
         scheduleTimeout(() => setCloudStatus(""), 3000);
@@ -369,9 +380,14 @@ export default function RapidCycleApp() {
   const runCloudRestore = useCallback(async (opts = {}) => {
     const url = settings.gasUrl;
     if (!url) return false;
+
+    if (cloudAbortRef.current) cloudAbortRef.current.abort();
+    const controller = new AbortController();
+    cloudAbortRef.current = controller;
+
     if (opts.silent !== true) setCloudStatus("restoring");
     try {
-      const data = await gasRestore(url);
+      const data = await gasRestore(url, controller.signal);
       if (!data) {
         if (opts.silent !== true) {
           setCloudStatus("error");
@@ -388,7 +404,8 @@ export default function RapidCycleApp() {
         scheduleTimeout(() => setCloudStatus(""), 3000);
       }
       return true;
-    } catch {
+    } catch (err) {
+      if (err && err.name === "AbortError") return false;
       if (opts.silent !== true) {
         setCloudStatus("error");
         scheduleTimeout(() => setCloudStatus(""), 3000);
@@ -406,10 +423,13 @@ export default function RapidCycleApp() {
     runCloudRestore({ silent: true });
   }, [settings.gasUrl, decks.length, folders.length, stats, runCloudRestore]);
 
-  // Auto-backup when a study session finishes
+  // Auto-backup when a study session finishes (debounced: at most once per 5 min)
   useEffect(() => {
     if (view !== "result") return;
     if (!settings.gasUrl) return;
+    const now = Date.now();
+    if (now - lastAutoBackupAtRef.current < CLOUD_BACKUP_MIN_INTERVAL_MS) return;
+    lastAutoBackupAtRef.current = now;
     runCloudBackup({ silent: true });
   }, [view, settings.gasUrl, runCloudBackup]);
 
