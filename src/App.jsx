@@ -627,18 +627,19 @@ export default function RapidCycleApp() {
     const controller = new AbortController();
     cloudAbortRef.current = controller;
 
-    try {
-      for (const deckId of touchedDeckIds) {
-        if (controller.signal.aborted) return;
-        const deck = decks.find(d => d.id === deckId);
-        if (!deck) continue;
+    for (const deckId of touchedDeckIds) {
+      if (controller.signal.aborted) return;
+      const deck = decks.find(d => d.id === deckId);
+      if (!deck) continue;
+      try {
         await syncDeck(deck, controller.signal);
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+        console.warn(`syncDeck failed for ${deckId}, adding to pending`, err);
+        addPendingDirtyDeck(deckId);
       }
-    } catch (err) {
-      if (err && err.name === "AbortError") return;
-      console.warn("syncTouchedDecks failed", err);
     }
-  }, [settings.gasUrl, touchedDeckIds, decks, syncDeck]);
+  }, [settings.gasUrl, touchedDeckIds, decks, syncDeck, addPendingDirtyDeck]);
 
   // 学習終了時: 触れたデッキだけ差分同期（5分デバウンス）
   useEffect(() => {
