@@ -404,6 +404,8 @@ export default function RapidCycleApp() {
       timersRef.current.clear();
       rafsRef.current.forEach(cancelAnimationFrame);
       rafsRef.current.clear();
+      for (const tid of deckSyncTimersRef.current.values()) clearTimeout(tid);
+      deckSyncTimersRef.current.clear();
     };
   }, []);
 
