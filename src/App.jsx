@@ -595,6 +595,10 @@ export default function RapidCycleApp() {
         orphanResolveRef.current("cancel");
         orphanResolveRef.current = null;
       }
+      if (restoreResolveRef.current) {
+        restoreResolveRef.current("cancel");
+        restoreResolveRef.current = null;
+      }
     };
   }, []);
 
