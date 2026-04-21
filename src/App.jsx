@@ -11,6 +11,8 @@ const SWIPE_THRESHOLD = 60;
 const CLOUD_BACKUP_MIN_INTERVAL_MS = 5 * 60 * 1000;
 const STORAGE_KEY_PENDING = "rc_pending";
 
+const SPRING_TRANSITION = { type: "tween", duration: 0.35, ease: [0.32, 0.72, 0, 1] };
+
 const DEFAULT_PENDING = {
   deletedDeckIds: [],
   metaDirty: false,
@@ -281,6 +283,16 @@ function formatRelativeDate(isoString) {
   return `${months}ヶ月前`;
 }
 
+// ─── LAYOUT HELPERS ───
+function MaybeLayoutDiv({ isActive, layoutId, children, ...rest }) {
+  if (isActive) return <motion.div layoutId={layoutId} transition={SPRING_TRANSITION} {...rest}>{children}</motion.div>;
+  return <div {...rest}>{children}</div>;
+}
+function MaybeLayoutButton({ isActive, layoutId, children, ...rest }) {
+  if (isActive) return <motion.button layoutId={layoutId} transition={SPRING_TRANSITION} {...rest}>{children}</motion.button>;
+  return <button {...rest}>{children}</button>;
+}
+
 // ─── MAIN COMPONENT ───
 export default function RapidCycleApp() {
   const [view, setView] = useState("home"); // home | folder | detail | import | study | result | settings | crossSetup
@@ -450,15 +462,15 @@ export default function RapidCycleApp() {
   const swipeBackRef = useRef(null);
   useEffect(() => {
     if (view === "detail") {
-      swipeBackRef.current = () => { setView("home"); setEditingIdx(null); setDetailFilter("all"); setDetailCount(null); setIsRenamingDeck(false); };
+      swipeBackRef.current = () => { setTransitionOriginId(`deck-${activeDeck?.id}`); setView("home"); setEditingIdx(null); setDetailFilter("all"); setDetailCount(null); setIsRenamingDeck(false); };
     } else if (view === "folder") {
-      swipeBackRef.current = () => setView("home");
+      swipeBackRef.current = () => { setTransitionOriginId(`folder-${activeFolder?.id}`); setView("home"); };
     } else if (view === "crossSetup") {
-      swipeBackRef.current = () => setView(activeFolder ? "folder" : "home");
+      swipeBackRef.current = () => { setTransitionOriginId(activeFolder ? `crossSetup-${activeFolder.id}` : "crossSetup-home"); setView(activeFolder ? "folder" : "home"); };
     } else if (view === "settings") {
-      swipeBackRef.current = () => setView("home");
+      swipeBackRef.current = () => { setTransitionOriginId("settings-btn"); setView("home"); };
     } else if (view === "import") {
-      swipeBackRef.current = () => { setView("home"); setImportText(""); setDeckName(""); };
+      swipeBackRef.current = () => { setTransitionOriginId("import-btn"); setView("home"); setImportText(""); setDeckName(""); };
     } else if (view === "result") {
       swipeBackRef.current = () => setView("home");
     } else {
@@ -1409,8 +1421,6 @@ export default function RapidCycleApp() {
   const swipeOpacity = Math.min(Math.abs(swipeX) / 120, 1);
   const swipeRotate = (swipeX / 800) * 8;
 
-  const springTransition = { type: "spring", stiffness: 350, damping: 35, mass: 0.8 };
-
   const renderView = () => {
   // ── HOME ──
   if (view === "home") {
@@ -1421,17 +1431,17 @@ export default function RapidCycleApp() {
       const wc = deck.words.length;
       const studied = deck.words.filter(w => stats[statsKey(w)]?.seen > 0).length;
       return (
-        <motion.div key={deck.id} layoutId={`deck-${deck.id}`} style={s.deckCard} transition={springTransition}>
-          <motion.div style={{ display: "flex", alignItems: "center", width: "100%" }} initial={{ opacity: 0 }} animate={{ opacity: 1, transition: { delay: 0.15 } }} exit={{ opacity: 0, transition: { duration: 0.1 } }}>
-            <div style={s.deckInfo} onClick={() => { setActiveDeck(deck); setView("detail"); }}>
+        <MaybeLayoutDiv key={deck.id} isActive={transitionOriginId === `deck-${deck.id}`} layoutId={`deck-${deck.id}`} style={s.deckCard}>
+          <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
+            <div style={s.deckInfo} onClick={() => { setTransitionOriginId(`deck-${deck.id}`); setActiveDeck(deck); setView("detail"); }}>
               <span style={s.deckName}>{deck.name}</span>
               <span style={s.deckMeta}>{wc}語 · {studied}語 学習済み</span>
             </div>
             <div style={s.deckActions}>
-              <motion.button layoutId={`study-${deck.id}`} style={s.deckPlayBtn} onClick={() => { setTransitionOriginId(`study-${deck.id}`); startStudy(deck); }} transition={springTransition}>▶</motion.button>
+              <MaybeLayoutButton isActive={transitionOriginId === `study-${deck.id}`} layoutId={`study-${deck.id}`} style={s.deckPlayBtn} onClick={() => { setTransitionOriginId(`study-${deck.id}`); startStudy(deck); }}>▶</MaybeLayoutButton>
             </div>
-          </motion.div>
-        </motion.div>
+          </div>
+        </MaybeLayoutDiv>
       );
     };
 
@@ -1451,23 +1461,23 @@ export default function RapidCycleApp() {
                 <p style={s.brandSub}>高速周回フラッシュカード</p>
               </div>
             </div>
-            <motion.button layoutId="settings-btn" style={s.settingsBtn} onClick={() => setView("settings")} transition={springTransition}>
+            <MaybeLayoutButton isActive={transitionOriginId === "settings-btn"} layoutId="settings-btn" style={s.settingsBtn} onClick={() => { setTransitionOriginId("settings-btn"); setView("settings"); }}>
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
                 <path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" stroke={t.textMuted} strokeWidth="1.5"/>
                 <path d="M16.2 12.2a1.4 1.4 0 00.28 1.54l.05.05a1.7 1.7 0 11-2.4 2.4l-.05-.05a1.4 1.4 0 00-1.54-.28 1.4 1.4 0 00-.84 1.28v.14a1.7 1.7 0 11-3.4 0v-.07a1.4 1.4 0 00-.92-1.28 1.4 1.4 0 00-1.54.28l-.05.05a1.7 1.7 0 11-2.4-2.4l.05-.05a1.4 1.4 0 00.28-1.54 1.4 1.4 0 00-1.28-.84H2.3a1.7 1.7 0 110-3.4h.07a1.4 1.4 0 001.28-.92 1.4 1.4 0 00-.28-1.54l-.05-.05a1.7 1.7 0 112.4-2.4l.05.05a1.4 1.4 0 001.54.28h.07a1.4 1.4 0 00.84-1.28V2.3a1.7 1.7 0 113.4 0v.07a1.4 1.4 0 00.84 1.28 1.4 1.4 0 001.54-.28l.05-.05a1.7 1.7 0 112.4 2.4l-.05.05a1.4 1.4 0 00-.28 1.54v.07a1.4 1.4 0 001.28.84h.14a1.7 1.7 0 110 3.4h-.07a1.4 1.4 0 00-1.28.84z" stroke={t.textMuted} strokeWidth="1.5"/>
               </svg>
-            </motion.button>
+            </MaybeLayoutButton>
           </header>
 
           {/* Cross-study button (fixed, outside scroll area) */}
           {totalWords > 0 && (
-            <motion.button layoutId="crossSetup-home" style={s.crossStudyBtn} onClick={() => { setActiveFolder(null); setView("crossSetup"); }} transition={springTransition}>
+            <MaybeLayoutButton isActive={transitionOriginId === "crossSetup-home"} layoutId="crossSetup-home" style={s.crossStudyBtn} onClick={() => { setTransitionOriginId("crossSetup-home"); setActiveFolder(null); setView("crossSetup"); }}>
               <span style={{ fontSize: "16px" }}>🔀</span>
               <div>
                 <span style={{ fontSize: "14px", fontWeight: "600", color: t.text }}>横断学習</span>
                 <span style={{ fontSize: "12px", color: t.textMuted, marginLeft: "8px" }}>全{totalWords}語から出題</span>
               </div>
-            </motion.button>
+            </MaybeLayoutButton>
           )}
 
           <div style={s.scrollWrapper}>
@@ -1488,8 +1498,8 @@ export default function RapidCycleApp() {
                 const isCollapsed = collapsedFolders[folder.id];
                 return (
                   <div key={folder.id} style={{ marginBottom: "8px" }}>
-                    <motion.div layoutId={`folder-${folder.id}`} style={s.deckCard} transition={springTransition}>
-                      <motion.div style={{ display: "flex", alignItems: "center", width: "100%" }} initial={{ opacity: 0 }} animate={{ opacity: 1, transition: { delay: 0.15 } }} exit={{ opacity: 0, transition: { duration: 0.1 } }}>
+                    <MaybeLayoutDiv isActive={transitionOriginId === `folder-${folder.id}`} layoutId={`folder-${folder.id}`} style={s.deckCard}>
+                      <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
                         <div style={{ ...s.deckInfo, flexDirection: "row", alignItems: "center", gap: "10px" }} onClick={() => toggleFolderCollapse(folder.id)}>
                           <span style={{ fontSize: "12px", color: t.textMuted, transition: "transform 0.2s", transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)" }}>▼</span>
                           <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
@@ -1498,10 +1508,10 @@ export default function RapidCycleApp() {
                           </div>
                         </div>
                         <div style={s.deckActions}>
-                          <button style={s.deckPlayBtn} onClick={() => { setActiveFolder(folder); setView("folder"); }}>→</button>
+                          <button style={s.deckPlayBtn} onClick={() => { setTransitionOriginId(`folder-${folder.id}`); setActiveFolder(folder); setView("folder"); }}>→</button>
                         </div>
-                      </motion.div>
-                    </motion.div>
+                      </div>
+                    </MaybeLayoutDiv>
                     {!isCollapsed && folderDecks.length > 0 && (
                       <div style={{ marginLeft: "16px", borderLeft: `2px solid ${t.borderLight}`, paddingLeft: "12px", marginTop: "4px" }}>
                         {folderDecks.map(renderDeckItem)}
@@ -1543,9 +1553,9 @@ export default function RapidCycleApp() {
               <>
                 <div style={s.fabBackdrop} onClick={() => setShowAddMenu(false)} />
                 <div style={s.fabMenu}>
-                  <motion.button layoutId="import-btn" style={s.fabMenuItem} onClick={() => { setShowAddMenu(false); setView("import"); }} transition={springTransition}>
+                  <MaybeLayoutButton isActive={transitionOriginId === "import-btn"} layoutId="import-btn" style={s.fabMenuItem} onClick={() => { setTransitionOriginId("import-btn"); setShowAddMenu(false); setView("import"); }}>
                     <span style={{ fontSize: "16px" }}>📚</span> 単語帳を追加
-                  </motion.button>
+                  </MaybeLayoutButton>
                   <button style={s.fabMenuItem} onClick={() => { setShowAddMenu(false); setShowNewFolder(true); }}>
                     <span style={{ fontSize: "16px" }}>📁</span> フォルダを作成
                   </button>
@@ -1587,10 +1597,10 @@ export default function RapidCycleApp() {
     const folderWords = folderDecks.reduce((sum, d) => sum + d.words.length, 0);
 
     return (
-      <motion.div key="folder" layoutId={`folder-${activeFolder.id}`} style={{ ...s.shell, borderRadius: 0 }} transition={springTransition}>
-        <motion.div style={s.page} initial={{ opacity: 0 }} animate={{ opacity: 1, transition: { delay: 0.15 } }} exit={{ opacity: 0, transition: { duration: 0.1 } }}>
+      <motion.div key="folder" layoutId={transitionOriginId === `folder-${activeFolder.id}` ? `folder-${activeFolder.id}` : undefined} style={{ ...s.shell, borderRadius: 0 }} transition={SPRING_TRANSITION} onLayoutAnimationComplete={() => setTransitionOriginId(null)}>
+        <div style={s.page}>
           <header style={s.subHeader}>
-            <button style={s.backBtn} onClick={() => setView("home")}>← 戻る</button>
+            <button style={s.backBtn} onClick={() => { setTransitionOriginId(`folder-${activeFolder.id}`); setView("home"); }}>← 戻る</button>
             <h2 style={s.subTitle}>📁 {activeFolder.name}</h2>
           </header>
 
@@ -1598,13 +1608,13 @@ export default function RapidCycleApp() {
           <div style={s.scrollArea}>
           {/* Folder cross-study */}
           {folderWords > 0 && (
-            <motion.button layoutId={`crossSetup-${activeFolder.id}`} style={s.crossStudyBtn} onClick={() => { setView("crossSetup"); }} transition={springTransition}>
+            <MaybeLayoutButton isActive={transitionOriginId === `crossSetup-${activeFolder.id}`} layoutId={`crossSetup-${activeFolder.id}`} style={s.crossStudyBtn} onClick={() => { setTransitionOriginId(`crossSetup-${activeFolder.id}`); setView("crossSetup"); }}>
               <span style={{ fontSize: "16px" }}>🔀</span>
               <div>
                 <span style={{ fontSize: "14px", fontWeight: "600", color: t.text }}>フォルダ横断学習</span>
                 <span style={{ fontSize: "12px", color: t.textMuted, marginLeft: "8px" }}>{folderWords}語から出題</span>
               </div>
-            </motion.button>
+            </MaybeLayoutButton>
           )}
 
           {folderDecks.length === 0 ? (
@@ -1620,17 +1630,17 @@ export default function RapidCycleApp() {
                 const wc = deck.words.length;
                 const studied = deck.words.filter(w => stats[statsKey(w)]?.seen > 0).length;
                 return (
-                  <motion.div key={deck.id} layoutId={`deck-${deck.id}`} style={s.deckCard} transition={springTransition}>
-                    <motion.div style={{ display: "flex", alignItems: "center", width: "100%" }} initial={{ opacity: 0 }} animate={{ opacity: 1, transition: { delay: 0.15 } }} exit={{ opacity: 0, transition: { duration: 0.1 } }}>
-                      <div style={s.deckInfo} onClick={() => { setActiveDeck(deck); setView("detail"); }}>
+                  <MaybeLayoutDiv key={deck.id} isActive={transitionOriginId === `deck-${deck.id}`} layoutId={`deck-${deck.id}`} style={s.deckCard}>
+                    <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
+                      <div style={s.deckInfo} onClick={() => { setTransitionOriginId(`deck-${deck.id}`); setActiveDeck(deck); setView("detail"); }}>
                         <span style={s.deckName}>{deck.name}</span>
                         <span style={s.deckMeta}>{wc}語 · {studied}語 学習済み</span>
                       </div>
                       <div style={s.deckActions}>
-                        <motion.button layoutId={`study-${deck.id}`} style={s.deckPlayBtn} onClick={() => { setTransitionOriginId(`study-${deck.id}`); startStudy(deck); }} transition={springTransition}>▶</motion.button>
+                        <MaybeLayoutButton isActive={transitionOriginId === `study-${deck.id}`} layoutId={`study-${deck.id}`} style={s.deckPlayBtn} onClick={() => { setTransitionOriginId(`study-${deck.id}`); startStudy(deck); }}>▶</MaybeLayoutButton>
                       </div>
-                    </motion.div>
-                  </motion.div>
+                    </div>
+                  </MaybeLayoutDiv>
                 );
               })}
             </div>
@@ -1667,7 +1677,7 @@ export default function RapidCycleApp() {
               </div>
             );
           })()}
-        </motion.div>
+        </div>
       </motion.div>
     );
   }
@@ -1697,11 +1707,12 @@ export default function RapidCycleApp() {
       { label: "50語", value: 50 },
     ];
 
+    const crossSetupId = activeFolder ? `crossSetup-${activeFolder.id}` : "crossSetup-home";
     return (
-      <motion.div key="crossSetup" layoutId={activeFolder ? `crossSetup-${activeFolder.id}` : "crossSetup-home"} style={{ ...s.shell, borderRadius: 0 }} transition={springTransition}>
-        <motion.div style={s.page} initial={{ opacity: 0 }} animate={{ opacity: 1, transition: { delay: 0.15 } }} exit={{ opacity: 0, transition: { duration: 0.1 } }}>
+      <motion.div key="crossSetup" layoutId={transitionOriginId === crossSetupId ? crossSetupId : undefined} style={{ ...s.shell, borderRadius: 0 }} transition={SPRING_TRANSITION} onLayoutAnimationComplete={() => setTransitionOriginId(null)}>
+        <div style={s.page}>
           <header style={s.subHeader}>
-            <button style={s.backBtn} onClick={() => setView(activeFolder ? "folder" : "home")}>← 戻る</button>
+            <button style={s.backBtn} onClick={() => { setTransitionOriginId(crossSetupId); setView(activeFolder ? "folder" : "home"); }}>← 戻る</button>
             <h2 style={s.subTitle}>横断学習</h2>
           </header>
 
@@ -1742,19 +1753,19 @@ export default function RapidCycleApp() {
             </div>
           </div>
 
-          <motion.button
+          <MaybeLayoutButton
+            isActive={transitionOriginId === "study-__cross__"}
             layoutId="study-__cross__"
             style={{ ...s.primaryBtn, marginTop: "20px", opacity: filteredCount > 0 ? 1 : 0.4 }}
             disabled={filteredCount === 0}
-            transition={springTransition}
             onClick={() => { setTransitionOriginId("study-__cross__"); startCrossStudy(sourceDecks, crossFilter, crossCount, `${sourceLabel}（横断）`); }}
           >
             {crossCount === null ? filteredCount : Math.min(filteredCount, crossCount)}語で学習開始
-          </motion.button>
+          </MaybeLayoutButton>
           </div>
           <div style={s.scrollFade} />
           </div>{/* scrollWrapper */}
-        </motion.div>
+        </div>
       </motion.div>
     );
   }
@@ -1858,10 +1869,10 @@ export default function RapidCycleApp() {
       : words.filter(w => getMemoryLevel(w).level === parseInt(detailFilter));
 
     return (
-      <motion.div key="detail" layoutId={`deck-${activeDeck.id}`} style={{ ...s.shell, borderRadius: 0 }} transition={springTransition}>
-        <motion.div style={s.page} initial={{ opacity: 0 }} animate={{ opacity: 1, transition: { delay: 0.15 } }} exit={{ opacity: 0, transition: { duration: 0.1 } }}>
+      <motion.div key="detail" layoutId={transitionOriginId === `deck-${activeDeck.id}` ? `deck-${activeDeck.id}` : undefined} style={{ ...s.shell, borderRadius: 0 }} transition={SPRING_TRANSITION} onLayoutAnimationComplete={() => setTransitionOriginId(null)}>
+        <div style={s.page}>
           <header style={s.subHeader}>
-            <button style={s.backBtn} onClick={() => { setView("home"); setEditingIdx(null); setDetailFilter("all"); setDetailCount(null); setIsRenamingDeck(false); }}>← 戻る</button>
+            <button style={s.backBtn} onClick={() => { setTransitionOriginId(`deck-${activeDeck.id}`); setView("home"); setEditingIdx(null); setDetailFilter("all"); setDetailCount(null); setIsRenamingDeck(false); }}>← 戻る</button>
             {isRenamingDeck ? (
               <div style={s.renameRow}>
                 <input
@@ -1897,11 +1908,11 @@ export default function RapidCycleApp() {
 
           {/* Actions */}
           <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
-            <motion.button
+            <MaybeLayoutButton
+              isActive={transitionOriginId === `study-${activeDeck.id}`}
               layoutId={`study-${activeDeck.id}`}
               style={{ ...s.primaryBtn, flex: 1, opacity: filteredWords.length > 0 ? 1 : 0.4 }}
               disabled={filteredWords.length === 0}
-              transition={springTransition}
               onClick={() => {
                 const studyWords = detailCount === null || filteredWords.length <= detailCount
                   ? filteredWords
@@ -1916,7 +1927,7 @@ export default function RapidCycleApp() {
                   : detailCount;
                 return `${n}語で学習する`;
               })()}
-            </motion.button>
+            </MaybeLayoutButton>
             <button style={{ ...s.exportBtn, borderColor: exportCopied ? "rgba(74, 222, 128, 0.3)" : t.borderLight }} onClick={exportDeck}>
               {exportCopied ? (
                 <span style={{ fontSize: "11px", color: "#4ade80", fontWeight: "600" }}>✓</span>
@@ -2178,7 +2189,7 @@ export default function RapidCycleApp() {
               </div>
             );
           })()}
-        </motion.div>
+        </div>
       </motion.div>
     );
   }
@@ -2186,10 +2197,10 @@ export default function RapidCycleApp() {
   // ── SETTINGS ──
   if (view === "settings") {
     return (
-      <motion.div key="settings" layoutId="settings-btn" style={{ ...s.shell, borderRadius: 0 }} transition={springTransition}>
-        <motion.div style={s.page} initial={{ opacity: 0 }} animate={{ opacity: 1, transition: { delay: 0.15 } }} exit={{ opacity: 0, transition: { duration: 0.1 } }}>
+      <motion.div key="settings" layoutId={transitionOriginId === "settings-btn" ? "settings-btn" : undefined} style={{ ...s.shell, borderRadius: 0 }} transition={SPRING_TRANSITION} onLayoutAnimationComplete={() => setTransitionOriginId(null)}>
+        <div style={s.page}>
           <header style={s.subHeader}>
-            <button style={s.backBtn} onClick={() => setView("home")}>← 戻る</button>
+            <button style={s.backBtn} onClick={() => { setTransitionOriginId("settings-btn"); setView("home"); }}>← 戻る</button>
             <h2 style={s.subTitle}>設定</h2>
           </header>
 
@@ -2396,7 +2407,7 @@ export default function RapidCycleApp() {
           </div>
           <div style={s.scrollFade} />
           </div>{/* scrollWrapper */}
-        </motion.div>
+        </div>
 
         {/* Confirmation modal */}
         {deleteConfirm && (() => {
@@ -2638,10 +2649,10 @@ export default function RapidCycleApp() {
   if (view === "import") {
     const preview = importText ? parseCSV(importText) : [];
     return (
-      <motion.div key="import" layoutId="import-btn" style={{ ...s.shell, borderRadius: 0 }} transition={springTransition}>
-        <motion.div style={s.page} initial={{ opacity: 0 }} animate={{ opacity: 1, transition: { delay: 0.15 } }} exit={{ opacity: 0, transition: { duration: 0.1 } }}>
+      <motion.div key="import" layoutId={transitionOriginId === "import-btn" ? "import-btn" : undefined} style={{ ...s.shell, borderRadius: 0 }} transition={SPRING_TRANSITION} onLayoutAnimationComplete={() => setTransitionOriginId(null)}>
+        <div style={s.page}>
           <header style={s.subHeader}>
-            <button style={s.backBtn} onClick={() => { setView("home"); setImportText(""); setDeckName(""); }}>← 戻る</button>
+            <button style={s.backBtn} onClick={() => { setTransitionOriginId("import-btn"); setView("home"); setImportText(""); setDeckName(""); }}>← 戻る</button>
             <h2 style={s.subTitle}>単語帳を追加</h2>
           </header>
 
@@ -2709,7 +2720,7 @@ export default function RapidCycleApp() {
           </div>
           <div style={s.scrollFade} />
           </div>{/* scrollWrapper */}
-        </motion.div>
+        </div>
       </motion.div>
     );
   }
@@ -2774,7 +2785,7 @@ export default function RapidCycleApp() {
     };
 
     return (
-      <motion.div key="study" layoutId={transitionOriginId ?? undefined} style={{ ...s.shell, borderRadius: 0 }} transition={springTransition}>
+      <motion.div key="study" layoutId={transitionOriginId ?? undefined} style={{ ...s.shell, borderRadius: 0 }} transition={SPRING_TRANSITION} onLayoutAnimationComplete={() => setTransitionOriginId(null)}>
         <div style={s.studyPage}>
           {/* Header */}
           <div style={s.studyNav}>
