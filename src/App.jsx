@@ -1422,13 +1422,15 @@ export default function RapidCycleApp() {
       const studied = deck.words.filter(w => stats[statsKey(w)]?.seen > 0).length;
       return (
         <motion.div key={deck.id} layoutId={`deck-${deck.id}`} style={s.deckCard} transition={springTransition}>
-          <div style={s.deckInfo} onClick={() => { setActiveDeck(deck); setView("detail"); }}>
-            <span style={s.deckName}>{deck.name}</span>
-            <span style={s.deckMeta}>{wc}語 · {studied}語 学習済み</span>
-          </div>
-          <div style={s.deckActions}>
-            <motion.button layoutId={`study-${deck.id}`} style={s.deckPlayBtn} onClick={() => { setTransitionOriginId(`study-${deck.id}`); startStudy(deck); }} transition={springTransition}>▶</motion.button>
-          </div>
+          <motion.div style={{ display: "flex", alignItems: "center", width: "100%" }} initial={{ opacity: 0 }} animate={{ opacity: 1, transition: { delay: 0.15 } }} exit={{ opacity: 0, transition: { duration: 0.1 } }}>
+            <div style={s.deckInfo} onClick={() => { setActiveDeck(deck); setView("detail"); }}>
+              <span style={s.deckName}>{deck.name}</span>
+              <span style={s.deckMeta}>{wc}語 · {studied}語 学習済み</span>
+            </div>
+            <div style={s.deckActions}>
+              <motion.button layoutId={`study-${deck.id}`} style={s.deckPlayBtn} onClick={() => { setTransitionOriginId(`study-${deck.id}`); startStudy(deck); }} transition={springTransition}>▶</motion.button>
+            </div>
+          </motion.div>
         </motion.div>
       );
     };
@@ -1487,16 +1489,18 @@ export default function RapidCycleApp() {
                 return (
                   <div key={folder.id} style={{ marginBottom: "8px" }}>
                     <motion.div layoutId={`folder-${folder.id}`} style={s.deckCard} transition={springTransition}>
-                      <div style={{ ...s.deckInfo, flexDirection: "row", alignItems: "center", gap: "10px" }} onClick={() => toggleFolderCollapse(folder.id)}>
-                        <span style={{ fontSize: "12px", color: t.textMuted, transition: "transform 0.2s", transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)" }}>▼</span>
-                        <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                          <span style={s.deckName}>📁 {folder.name}</span>
-                          <span style={s.deckMeta}>{folderDecks.length}冊 · {folderWords}語</span>
+                      <motion.div style={{ display: "flex", alignItems: "center", width: "100%" }} initial={{ opacity: 0 }} animate={{ opacity: 1, transition: { delay: 0.15 } }} exit={{ opacity: 0, transition: { duration: 0.1 } }}>
+                        <div style={{ ...s.deckInfo, flexDirection: "row", alignItems: "center", gap: "10px" }} onClick={() => toggleFolderCollapse(folder.id)}>
+                          <span style={{ fontSize: "12px", color: t.textMuted, transition: "transform 0.2s", transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)" }}>▼</span>
+                          <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                            <span style={s.deckName}>📁 {folder.name}</span>
+                            <span style={s.deckMeta}>{folderDecks.length}冊 · {folderWords}語</span>
+                          </div>
                         </div>
-                      </div>
-                      <div style={s.deckActions}>
-                        <button style={s.deckPlayBtn} onClick={() => { setActiveFolder(folder); setView("folder"); }}>→</button>
-                      </div>
+                        <div style={s.deckActions}>
+                          <button style={s.deckPlayBtn} onClick={() => { setActiveFolder(folder); setView("folder"); }}>→</button>
+                        </div>
+                      </motion.div>
                     </motion.div>
                     {!isCollapsed && folderDecks.length > 0 && (
                       <div style={{ marginLeft: "16px", borderLeft: `2px solid ${t.borderLight}`, paddingLeft: "12px", marginTop: "4px" }}>
@@ -1617,13 +1621,15 @@ export default function RapidCycleApp() {
                 const studied = deck.words.filter(w => stats[statsKey(w)]?.seen > 0).length;
                 return (
                   <motion.div key={deck.id} layoutId={`deck-${deck.id}`} style={s.deckCard} transition={springTransition}>
-                    <div style={s.deckInfo} onClick={() => { setActiveDeck(deck); setView("detail"); }}>
-                      <span style={s.deckName}>{deck.name}</span>
-                      <span style={s.deckMeta}>{wc}語 · {studied}語 学習済み</span>
-                    </div>
-                    <div style={s.deckActions}>
-                      <motion.button layoutId={`study-${deck.id}`} style={s.deckPlayBtn} onClick={() => { setTransitionOriginId(`study-${deck.id}`); startStudy(deck); }} transition={springTransition}>▶</motion.button>
-                    </div>
+                    <motion.div style={{ display: "flex", alignItems: "center", width: "100%" }} initial={{ opacity: 0 }} animate={{ opacity: 1, transition: { delay: 0.15 } }} exit={{ opacity: 0, transition: { duration: 0.1 } }}>
+                      <div style={s.deckInfo} onClick={() => { setActiveDeck(deck); setView("detail"); }}>
+                        <span style={s.deckName}>{deck.name}</span>
+                        <span style={s.deckMeta}>{wc}語 · {studied}語 学習済み</span>
+                      </div>
+                      <div style={s.deckActions}>
+                        <motion.button layoutId={`study-${deck.id}`} style={s.deckPlayBtn} onClick={() => { setTransitionOriginId(`study-${deck.id}`); startStudy(deck); }} transition={springTransition}>▶</motion.button>
+                      </div>
+                    </motion.div>
                   </motion.div>
                 );
               })}
