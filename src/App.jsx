@@ -1436,7 +1436,7 @@ export default function RapidCycleApp() {
     };
 
     return (
-      <motion.div key="home" style={s.shell}>
+      <motion.div key="home" style={s.shell} exit={{ opacity: 0, transition: { duration: 0, delay: 0.45 } }}>
         <div style={s.page}>
           <header style={s.homeHeader}>
             <div style={s.brand}>
