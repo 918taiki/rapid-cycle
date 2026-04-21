@@ -11,7 +11,7 @@ const SWIPE_THRESHOLD = 60;
 const CLOUD_BACKUP_MIN_INTERVAL_MS = 5 * 60 * 1000;
 const STORAGE_KEY_PENDING = "rc_pending";
 
-const SPRING_TRANSITION = { type: "tween", duration: 0.35, ease: [0.32, 0.72, 0, 1] };
+const SPRING_TRANSITION = { type: "tween", duration: 0.45, ease: [0.32, 0.72, 0, 1] };
 
 const DEFAULT_PENDING = {
   deletedDeckIds: [],
