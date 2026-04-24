@@ -326,9 +326,6 @@ export default function RapidCycleApp() {
   const [folders, setFolders] = useState(() => loadFromStorage(STORAGE_KEY_FOLDERS, []));
   const [activeDeck, setActiveDeck] = useState(null);
   const [activeFolder, setActiveFolder] = useState(null);
-  const [navTransition, setNavTransition] = useState(null);
-  const lastNavOriginRef = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
-  const overlayRef = useRef(null);
   const [studySourceLabel, setStudySourceLabel] = useState("");
 
   // 単語→所属デッキIDの逆引きマップ（decks変更時のみ再構築）
@@ -404,40 +401,6 @@ export default function RapidCycleApp() {
     return id;
   }, []);
 
-  const startNavTransition = useCallback((x, y, onCovered) => {
-    lastNavOriginRef.current = { x, y };
-    setNavTransition({ x, y, phase: "expanding" });
-    scheduleTimeout(() => {
-      setNavTransition(prev => prev ? { ...prev, phase: "covering" } : null);
-      onCovered();
-      scheduleTimeout(() => {
-        setNavTransition(prev => prev ? { ...prev, phase: "revealing" } : null);
-        scheduleTimeout(() => {
-          setNavTransition(null);
-        }, 350);
-      }, 100);
-    }, 350);
-  }, [scheduleTimeout]);
-
-  useEffect(() => {
-    if (navTransition?.phase === "expanding" && overlayRef.current) {
-      const x = navTransition.x;
-      const y = navTransition.y;
-      const id1 = requestAnimationFrame(() => {
-        const id2 = requestAnimationFrame(() => {
-          if (overlayRef.current) {
-            overlayRef.current.style.clipPath = `circle(${Math.hypot(window.innerWidth, window.innerHeight)}px at ${x}px ${y}px)`;
-          }
-        });
-        rafsRef.current.add(id2);
-      });
-      rafsRef.current.add(id1);
-      return () => {
-        cancelAnimationFrame(id1);
-      };
-    }
-  }, [navTransition]);
-
   // アンマウント時に全タイマー/RAFをクリーンアップ
   useEffect(() => {
     return () => {
@@ -489,21 +452,21 @@ export default function RapidCycleApp() {
   const swipeBackRef = useRef(null);
   useEffect(() => {
     if (view === "detail") {
-      swipeBackRef.current = () => { const o = lastNavOriginRef.current; startNavTransition(o.x, o.y, () => { setView("home"); setEditingIdx(null); setDetailFilter("all"); setDetailCount(null); setIsRenamingDeck(false); }); };
+      swipeBackRef.current = () => { setView("home"); setEditingIdx(null); setDetailFilter("all"); setDetailCount(null); setIsRenamingDeck(false); };
     } else if (view === "folder") {
-      swipeBackRef.current = () => { const o = lastNavOriginRef.current; startNavTransition(o.x, o.y, () => setView("home")); };
+      swipeBackRef.current = () => setView("home");
     } else if (view === "crossSetup") {
-      swipeBackRef.current = () => { const o = lastNavOriginRef.current; startNavTransition(o.x, o.y, () => setView(activeFolder ? "folder" : "home")); };
+      swipeBackRef.current = () => setView(activeFolder ? "folder" : "home");
     } else if (view === "settings") {
-      swipeBackRef.current = () => { const o = lastNavOriginRef.current; startNavTransition(o.x, o.y, () => setView("home")); };
+      swipeBackRef.current = () => setView("home");
     } else if (view === "import") {
-      swipeBackRef.current = () => { const o = lastNavOriginRef.current; startNavTransition(o.x, o.y, () => { setView("home"); setImportText(""); setDeckName(""); }); };
+      swipeBackRef.current = () => { setView("home"); setImportText(""); setDeckName(""); };
     } else if (view === "result") {
-      swipeBackRef.current = () => { const o = lastNavOriginRef.current; startNavTransition(o.x, o.y, () => setView("home")); };
+      swipeBackRef.current = () => setView("home");
     } else {
       swipeBackRef.current = null;
     }
-  }, [view, activeFolder, startNavTransition]);
+  }, [view, activeFolder]);
 
   useEffect(() => {
     if (view === "study") return;
@@ -1462,12 +1425,12 @@ export default function RapidCycleApp() {
       return (
         <div key={deck.id} style={s.deckCard}>
           <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
-            <div style={s.deckInfo} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => { setActiveDeck(deck); setView("detail"); }); }}>
+            <div style={s.deckInfo} onClick={() => { setActiveDeck(deck); setView("detail"); }}>
               <span style={s.deckName}>{deck.name}</span>
               <span style={s.deckMeta}>{wc}語 · {studied}語 学習済み</span>
             </div>
             <div style={s.deckActions}>
-              <button style={s.deckPlayBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => startStudy(deck)); }}>▶</button>
+              <button style={s.deckPlayBtn} onClick={() => startStudy(deck)}>▶</button>
             </div>
           </div>
         </div>
@@ -1475,8 +1438,8 @@ export default function RapidCycleApp() {
     };
 
     return (
-      <motion.div key="home" style={s.shell}>
-        <div style={{ ...s.page, animation: "fadeInUp 400ms cubic-bezier(0.22, 1, 0.36, 1) both", animationDelay: "100ms" }}>
+      <motion.div key="home" style={s.shell} initial={{ opacity: 0, scale: 1.02 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}>
+        <div style={s.page}>
           <header style={s.homeHeader}>
             <div style={s.brand}>
               <div style={s.logoIcon}>
@@ -1490,7 +1453,7 @@ export default function RapidCycleApp() {
                 <p style={s.brandSub}>高速周回フラッシュカード</p>
               </div>
             </div>
-            <button style={s.settingsBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => setView("settings")); }}>
+            <button style={s.settingsBtn} onClick={() => setView("settings")}>
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
                 <path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" stroke={t.textMuted} strokeWidth="1.5"/>
                 <path d="M16.2 12.2a1.4 1.4 0 00.28 1.54l.05.05a1.7 1.7 0 11-2.4 2.4l-.05-.05a1.4 1.4 0 00-1.54-.28 1.4 1.4 0 00-.84 1.28v.14a1.7 1.7 0 11-3.4 0v-.07a1.4 1.4 0 00-.92-1.28 1.4 1.4 0 00-1.54.28l-.05.05a1.7 1.7 0 11-2.4-2.4l.05-.05a1.4 1.4 0 00.28-1.54 1.4 1.4 0 00-1.28-.84H2.3a1.7 1.7 0 110-3.4h.07a1.4 1.4 0 001.28-.92 1.4 1.4 0 00-.28-1.54l-.05-.05a1.7 1.7 0 112.4-2.4l.05.05a1.4 1.4 0 001.54.28h.07a1.4 1.4 0 00.84-1.28V2.3a1.7 1.7 0 113.4 0v.07a1.4 1.4 0 00.84 1.28 1.4 1.4 0 001.54-.28l.05-.05a1.7 1.7 0 112.4 2.4l-.05.05a1.4 1.4 0 00-.28 1.54v.07a1.4 1.4 0 001.28.84h.14a1.7 1.7 0 110 3.4h-.07a1.4 1.4 0 00-1.28.84z" stroke={t.textMuted} strokeWidth="1.5"/>
@@ -1500,7 +1463,7 @@ export default function RapidCycleApp() {
 
           {/* Cross-study button (fixed, outside scroll area) */}
           {totalWords > 0 && (
-            <button style={s.crossStudyBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => { setActiveFolder(null); setView("crossSetup"); }); }}>
+            <button style={s.crossStudyBtn} onClick={() => { setActiveFolder(null); setView("crossSetup"); }}>
               <span style={{ fontSize: "16px" }}>🔀</span>
               <div>
                 <span style={{ fontSize: "14px", fontWeight: "600", color: t.text }}>横断学習</span>
@@ -1537,7 +1500,7 @@ export default function RapidCycleApp() {
                           </div>
                         </div>
                         <div style={s.deckActions}>
-                          <button style={s.deckPlayBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => { setActiveFolder(folder); setView("folder"); }); }}>→</button>
+                          <button style={s.deckPlayBtn} onClick={() => { setActiveFolder(folder); setView("folder"); }}>→</button>
                         </div>
                       </div>
                     </div>
@@ -1582,7 +1545,7 @@ export default function RapidCycleApp() {
               <>
                 <div style={s.fabBackdrop} onClick={() => setShowAddMenu(false)} />
                 <div style={s.fabMenu}>
-                  <button style={s.fabMenuItem} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => { setShowAddMenu(false); setView("import"); }); }}>
+                  <button style={s.fabMenuItem} onClick={() => { setShowAddMenu(false); setView("import"); }}>
                     <span style={{ fontSize: "16px" }}>📚</span> 単語帳を追加
                   </button>
                   <button style={s.fabMenuItem} onClick={() => { setShowAddMenu(false); setShowNewFolder(true); }}>
@@ -1626,10 +1589,10 @@ export default function RapidCycleApp() {
     const folderWords = folderDecks.reduce((sum, d) => sum + d.words.length, 0);
 
     return (
-      <motion.div key="folder" style={s.shell}>
-        <div style={{ ...s.page, animation: "fadeInUp 400ms cubic-bezier(0.22, 1, 0.36, 1) both", animationDelay: "100ms" }}>
+      <motion.div key="folder" style={s.shell} initial={{ opacity: 0, scale: 1.02 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}>
+        <div style={s.page}>
           <header style={s.subHeader}>
-            <button style={s.backBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => setView("home")); }}>← 戻る</button>
+            <button style={s.backBtn} onClick={() => setView("home")}>← 戻る</button>
             <h2 style={s.subTitle}>📁 {activeFolder.name}</h2>
           </header>
 
@@ -1637,7 +1600,7 @@ export default function RapidCycleApp() {
           <div style={s.scrollArea}>
           {/* Folder cross-study */}
           {folderWords > 0 && (
-            <button style={s.crossStudyBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => setView("crossSetup")); }}>
+            <button style={s.crossStudyBtn} onClick={() => setView("crossSetup")}>
               <span style={{ fontSize: "16px" }}>🔀</span>
               <div>
                 <span style={{ fontSize: "14px", fontWeight: "600", color: t.text }}>フォルダ横断学習</span>
@@ -1661,12 +1624,12 @@ export default function RapidCycleApp() {
                 return (
                   <div key={deck.id} style={s.deckCard}>
                     <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
-                      <div style={s.deckInfo} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => { setActiveDeck(deck); setView("detail"); }); }}>
+                      <div style={s.deckInfo} onClick={() => { setActiveDeck(deck); setView("detail"); }}>
                         <span style={s.deckName}>{deck.name}</span>
                         <span style={s.deckMeta}>{wc}語 · {studied}語 学習済み</span>
                       </div>
                       <div style={s.deckActions}>
-                        <button style={s.deckPlayBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => startStudy(deck)); }}>▶</button>
+                        <button style={s.deckPlayBtn} onClick={() => startStudy(deck)}>▶</button>
                       </div>
                     </div>
                   </div>
@@ -1738,10 +1701,10 @@ export default function RapidCycleApp() {
 
     const crossSetupId = activeFolder ? `crossSetup-${activeFolder.id}` : "crossSetup-home";
     return (
-      <motion.div key="crossSetup" style={s.shell}>
-        <div style={{ ...s.page, animation: "fadeInUp 400ms cubic-bezier(0.22, 1, 0.36, 1) both", animationDelay: "100ms" }}>
+      <motion.div key="crossSetup" style={s.shell} initial={{ opacity: 0, scale: 1.02 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}>
+        <div style={s.page}>
           <header style={s.subHeader}>
-            <button style={s.backBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => setView(activeFolder ? "folder" : "home")); }}>← 戻る</button>
+            <button style={s.backBtn} onClick={() => setView(activeFolder ? "folder" : "home")}>← 戻る</button>
             <h2 style={s.subTitle}>横断学習</h2>
           </header>
 
@@ -1785,7 +1748,7 @@ export default function RapidCycleApp() {
           <button
             style={{ ...s.primaryBtn, marginTop: "20px", opacity: filteredCount > 0 ? 1 : 0.4 }}
             disabled={filteredCount === 0}
-            onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => startCrossStudy(sourceDecks, crossFilter, crossCount, `${sourceLabel}（横断）`)); }}
+            onClick={() => startCrossStudy(sourceDecks, crossFilter, crossCount, `${sourceLabel}（横断）`)}
           >
             {crossCount === null ? filteredCount : Math.min(filteredCount, crossCount)}語で学習開始
           </button>
@@ -1896,10 +1859,10 @@ export default function RapidCycleApp() {
       : words.filter(w => getMemoryLevel(w).level === parseInt(detailFilter));
 
     return (
-      <motion.div key="detail" style={s.shell}>
-        <div style={{ ...s.page, animation: "fadeInUp 400ms cubic-bezier(0.22, 1, 0.36, 1) both", animationDelay: "100ms" }}>
+      <motion.div key="detail" style={s.shell} initial={{ opacity: 0, scale: 1.02 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}>
+        <div style={s.page}>
           <header style={s.subHeader}>
-            <button style={s.backBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => { setView("home"); setEditingIdx(null); setDetailFilter("all"); setDetailCount(null); setIsRenamingDeck(false); }); }}>← 戻る</button>
+            <button style={s.backBtn} onClick={() => { setView("home"); setEditingIdx(null); setDetailFilter("all"); setDetailCount(null); setIsRenamingDeck(false); }}>← 戻る</button>
             {isRenamingDeck ? (
               <div style={s.renameRow}>
                 <input
@@ -1942,8 +1905,7 @@ export default function RapidCycleApp() {
                 const studyWords = detailCount === null || filteredWords.length <= detailCount
                   ? filteredWords
                   : shuffle([...filteredWords]).slice(0, detailCount);
-                const r = e.currentTarget.getBoundingClientRect();
-                startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => startStudy(activeDeck, studyWords));
+                startStudy(activeDeck, studyWords);
               }}
             >
               {(() => {
@@ -2222,10 +2184,10 @@ export default function RapidCycleApp() {
   // ── SETTINGS ──
   if (view === "settings") {
     return (
-      <motion.div key="settings" style={s.shell}>
-        <div style={{ ...s.page, animation: "fadeInUp 400ms cubic-bezier(0.22, 1, 0.36, 1) both", animationDelay: "100ms" }}>
+      <motion.div key="settings" style={s.shell} initial={{ opacity: 0, scale: 1.02 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}>
+        <div style={s.page}>
           <header style={s.subHeader}>
-            <button style={s.backBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => setView("home")); }}>← 戻る</button>
+            <button style={s.backBtn} onClick={() => setView("home")}>← 戻る</button>
             <h2 style={s.subTitle}>設定</h2>
           </header>
 
@@ -2674,10 +2636,10 @@ export default function RapidCycleApp() {
   if (view === "import") {
     const preview = importText ? parseCSV(importText) : [];
     return (
-      <motion.div key="import" style={s.shell}>
-        <div style={{ ...s.page, animation: "fadeInUp 400ms cubic-bezier(0.22, 1, 0.36, 1) both", animationDelay: "100ms" }}>
+      <motion.div key="import" style={s.shell} initial={{ opacity: 0, scale: 1.02 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}>
+        <div style={s.page}>
           <header style={s.subHeader}>
-            <button style={s.backBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => { setView("home"); setImportText(""); setDeckName(""); }); }}>← 戻る</button>
+            <button style={s.backBtn} onClick={() => { setView("home"); setImportText(""); setDeckName(""); }}>← 戻る</button>
             <h2 style={s.subTitle}>単語帳を追加</h2>
           </header>
 
@@ -2810,7 +2772,7 @@ export default function RapidCycleApp() {
     };
 
     return (
-      <motion.div key="study" style={s.shell}>
+      <motion.div key="study" style={s.shell} initial={{ opacity: 0, scale: 1.02 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}>
         <div style={s.studyPage}>
           {/* Header */}
           <div style={s.studyNav}>
@@ -2953,7 +2915,7 @@ export default function RapidCycleApp() {
   // ── RESULT ──
   if (view === "result") {
     return (
-      <motion.div key="result" style={s.shell} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: { duration: 0.15 } }}>
+      <motion.div key="result" style={s.shell} initial={{ opacity: 0, scale: 1.02 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}>
         <div style={s.page}>
           <div style={s.resultContent}>
             <div style={s.checkCircle}>✓</div>
@@ -2996,47 +2958,10 @@ export default function RapidCycleApp() {
   return null;
   }; // end renderView
 
-  const overlayBg = settings.theme === "dark"
-    ? "rgba(17, 17, 17, 0.8)"
-    : "rgba(245, 245, 247, 0.85)";
-
   return (
-    <>
-      <style>{`
-        @keyframes fadeInUp {
-          from { opacity: 0; transform: translateY(15px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
-      <AnimatePresence mode="popLayout" initial={false}>
-        {renderView()}
-      </AnimatePresence>
-      {navTransition && (
-        <div
-          ref={overlayRef}
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 50,
-            pointerEvents: navTransition.phase === "expanding" ? "all" : "none",
-            backdropFilter: "blur(10px)",
-            WebkitBackdropFilter: "blur(10px)",
-            backgroundColor: overlayBg,
-            willChange: "clip-path, opacity",
-            ...(navTransition.phase === "expanding" ? {
-              clipPath: `circle(0px at ${navTransition.x}px ${navTransition.y}px)`,
-              transition: "clip-path 350ms cubic-bezier(0.32, 0.72, 0, 1)",
-            } : navTransition.phase === "revealing" ? {
-              clipPath: `circle(${Math.hypot(window.innerWidth, window.innerHeight)}px at ${navTransition.x}px ${navTransition.y}px)`,
-              opacity: 0,
-              transition: "opacity 350ms ease-out",
-            } : {
-              clipPath: `circle(${Math.hypot(window.innerWidth, window.innerHeight)}px at ${navTransition.x}px ${navTransition.y}px)`,
-            }),
-          }}
-        />
-      )}
-    </>
+    <AnimatePresence mode="popLayout" initial={false}>
+      {renderView()}
+    </AnimatePresence>
   );
 }
 
