@@ -379,6 +379,7 @@ export default function RapidCycleApp() {
   const [isHorizontalSwipe, setIsHorizontalSwipe] = useState(null);
   const [animatingCards, setAnimatingCards] = useState([]);
   const [sessionTotal, setSessionTotal] = useState(0);
+  const [sessionWords, setSessionWords] = useState([]);
   const animIdRef = useRef(0);
   const sessionIdRef = useRef("");
 
@@ -1170,6 +1171,7 @@ export default function RapidCycleApp() {
     if (selected.length === 0) return;
     const tempDeck = { id: "__cross__", name: label, words: selected };
     setActiveDeck(tempDeck);
+    setSessionWords(selected);
     setStudySourceLabel(label);
     const shuffled = shuffle(selected);
     setCards(shuffled);
@@ -1213,6 +1215,7 @@ export default function RapidCycleApp() {
   const startStudy = (deck, studyWords) => {
     setActiveDeck(deck);
     const sourceWords = studyWords !== undefined ? studyWords : deck.words;
+    setSessionWords(sourceWords);
     const shuffled = shuffle(sourceWords);
     setCards(shuffled);
     setCurrentIdx(0);
@@ -2936,7 +2939,7 @@ export default function RapidCycleApp() {
 
             <div style={s.resultStats}>
               <div style={s.statBox}>
-                <span style={s.statValue}>{activeDeck?.words.length || 0}</span>
+                <span style={s.statValue}>{sessionWords.length}</span>
                 <span style={s.statLabel}>単語数</span>
               </div>
               <div style={s.statBox}>
@@ -2950,7 +2953,7 @@ export default function RapidCycleApp() {
             </div>
 
             <div style={s.resultBtns}>
-              <button style={s.primaryBtn} onClick={() => startStudy(activeDeck)}>
+              <button style={s.primaryBtn} onClick={() => startStudy(activeDeck, sessionWords)}>
                 もう一周する
               </button>
               {activeDeck && activeDeck.id !== "__cross__" && (
