@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 
 // ─── CONSTANTS ───
 const STORAGE_KEY_DECKS = "rc_decks";
@@ -11,7 +11,6 @@ const SWIPE_THRESHOLD = 60;
 const CLOUD_BACKUP_MIN_INTERVAL_MS = 5 * 60 * 1000;
 const STORAGE_KEY_PENDING = "rc_pending";
 
-const SPRING_TRANSITION = { type: "tween", duration: 0.45, ease: [0.32, 0.72, 0, 1] };
 
 const DEFAULT_PENDING = {
   deletedDeckIds: [],
@@ -283,15 +282,6 @@ function formatRelativeDate(isoString) {
   return `${months}ヶ月前`;
 }
 
-// ─── LAYOUT HELPERS ───
-function MaybeLayoutDiv({ isActive, layoutId, children, ...rest }) {
-  if (isActive) return <motion.div layoutId={layoutId} transition={SPRING_TRANSITION} {...rest}>{children}</motion.div>;
-  return <div {...rest}>{children}</div>;
-}
-function MaybeLayoutButton({ isActive, layoutId, children, ...rest }) {
-  if (isActive) return <motion.button layoutId={layoutId} transition={SPRING_TRANSITION} {...rest}>{children}</motion.button>;
-  return <button {...rest}>{children}</button>;
-}
 
 // ─── MAIN COMPONENT ───
 export default function RapidCycleApp() {
@@ -336,7 +326,9 @@ export default function RapidCycleApp() {
   const [folders, setFolders] = useState(() => loadFromStorage(STORAGE_KEY_FOLDERS, []));
   const [activeDeck, setActiveDeck] = useState(null);
   const [activeFolder, setActiveFolder] = useState(null);
-  const [transitionOriginId, setTransitionOriginId] = useState(null);
+  const [navTransition, setNavTransition] = useState(null);
+  const lastNavOriginRef = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+  const overlayRef = useRef(null);
   const [studySourceLabel, setStudySourceLabel] = useState("");
 
   // 単語→所属デッキIDの逆引きマップ（decks変更時のみ再構築）
@@ -412,6 +404,40 @@ export default function RapidCycleApp() {
     return id;
   }, []);
 
+  const startNavTransition = useCallback((x, y, onCovered) => {
+    lastNavOriginRef.current = { x, y };
+    setNavTransition({ x, y, phase: "expanding" });
+    scheduleTimeout(() => {
+      setNavTransition(prev => prev ? { ...prev, phase: "covering" } : null);
+      onCovered();
+      scheduleTimeout(() => {
+        setNavTransition(prev => prev ? { ...prev, phase: "revealing" } : null);
+        scheduleTimeout(() => {
+          setNavTransition(null);
+        }, 350);
+      }, 100);
+    }, 350);
+  }, [scheduleTimeout]);
+
+  useEffect(() => {
+    if (navTransition?.phase === "expanding" && overlayRef.current) {
+      const x = navTransition.x;
+      const y = navTransition.y;
+      const id1 = requestAnimationFrame(() => {
+        const id2 = requestAnimationFrame(() => {
+          if (overlayRef.current) {
+            overlayRef.current.style.clipPath = `circle(${Math.hypot(window.innerWidth, window.innerHeight)}px at ${x}px ${y}px)`;
+          }
+        });
+        rafsRef.current.add(id2);
+      });
+      rafsRef.current.add(id1);
+      return () => {
+        cancelAnimationFrame(id1);
+      };
+    }
+  }, [navTransition]);
+
   // アンマウント時に全タイマー/RAFをクリーンアップ
   useEffect(() => {
     return () => {
@@ -463,21 +489,21 @@ export default function RapidCycleApp() {
   const swipeBackRef = useRef(null);
   useEffect(() => {
     if (view === "detail") {
-      swipeBackRef.current = () => { setTransitionOriginId(`deck-${activeDeck?.id}`); setView("home"); setEditingIdx(null); setDetailFilter("all"); setDetailCount(null); setIsRenamingDeck(false); };
+      swipeBackRef.current = () => { const o = lastNavOriginRef.current; startNavTransition(o.x, o.y, () => { setView("home"); setEditingIdx(null); setDetailFilter("all"); setDetailCount(null); setIsRenamingDeck(false); }); };
     } else if (view === "folder") {
-      swipeBackRef.current = () => { setTransitionOriginId(`folder-${activeFolder?.id}`); setView("home"); };
+      swipeBackRef.current = () => { const o = lastNavOriginRef.current; startNavTransition(o.x, o.y, () => setView("home")); };
     } else if (view === "crossSetup") {
-      swipeBackRef.current = () => { setTransitionOriginId(activeFolder ? `crossSetup-${activeFolder.id}` : "crossSetup-home"); setView(activeFolder ? "folder" : "home"); };
+      swipeBackRef.current = () => { const o = lastNavOriginRef.current; startNavTransition(o.x, o.y, () => setView(activeFolder ? "folder" : "home")); };
     } else if (view === "settings") {
-      swipeBackRef.current = () => { setTransitionOriginId("settings-btn"); setView("home"); };
+      swipeBackRef.current = () => { const o = lastNavOriginRef.current; startNavTransition(o.x, o.y, () => setView("home")); };
     } else if (view === "import") {
-      swipeBackRef.current = () => { setTransitionOriginId("import-btn"); setView("home"); setImportText(""); setDeckName(""); };
+      swipeBackRef.current = () => { const o = lastNavOriginRef.current; startNavTransition(o.x, o.y, () => { setView("home"); setImportText(""); setDeckName(""); }); };
     } else if (view === "result") {
-      swipeBackRef.current = () => setView("home");
+      swipeBackRef.current = () => { const o = lastNavOriginRef.current; startNavTransition(o.x, o.y, () => setView("home")); };
     } else {
       swipeBackRef.current = null;
     }
-  }, [view, activeFolder]);
+  }, [view, activeFolder, startNavTransition]);
 
   useEffect(() => {
     if (view === "study") return;
@@ -1434,23 +1460,23 @@ export default function RapidCycleApp() {
       const wc = deck.words.length;
       const studied = deck.words.filter(w => stats[statsKey(w)]?.seen > 0).length;
       return (
-        <MaybeLayoutDiv key={deck.id} isActive={transitionOriginId === `deck-${deck.id}`} layoutId={`deck-${deck.id}`} style={s.deckCard}>
+        <div key={deck.id} style={s.deckCard}>
           <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
-            <div style={s.deckInfo} onClick={() => { setTransitionOriginId(`deck-${deck.id}`); setActiveDeck(deck); setView("detail"); }}>
+            <div style={s.deckInfo} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => { setActiveDeck(deck); setView("detail"); }); }}>
               <span style={s.deckName}>{deck.name}</span>
               <span style={s.deckMeta}>{wc}語 · {studied}語 学習済み</span>
             </div>
             <div style={s.deckActions}>
-              <MaybeLayoutButton isActive={transitionOriginId === `study-${deck.id}`} layoutId={`study-${deck.id}`} style={s.deckPlayBtn} onClick={() => { setTransitionOriginId(`study-${deck.id}`); startStudy(deck); }}>▶</MaybeLayoutButton>
+              <button style={s.deckPlayBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => startStudy(deck)); }}>▶</button>
             </div>
           </div>
-        </MaybeLayoutDiv>
+        </div>
       );
     };
 
     return (
       <motion.div key="home" style={s.shell}>
-        <div style={s.page}>
+        <div style={{ ...s.page, animation: "fadeInUp 400ms cubic-bezier(0.22, 1, 0.36, 1) both", animationDelay: "100ms" }}>
           <header style={s.homeHeader}>
             <div style={s.brand}>
               <div style={s.logoIcon}>
@@ -1464,23 +1490,23 @@ export default function RapidCycleApp() {
                 <p style={s.brandSub}>高速周回フラッシュカード</p>
               </div>
             </div>
-            <MaybeLayoutButton isActive={transitionOriginId === "settings-btn"} layoutId="settings-btn" style={s.settingsBtn} onClick={() => { setTransitionOriginId("settings-btn"); setView("settings"); }}>
+            <button style={s.settingsBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => setView("settings")); }}>
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
                 <path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" stroke={t.textMuted} strokeWidth="1.5"/>
                 <path d="M16.2 12.2a1.4 1.4 0 00.28 1.54l.05.05a1.7 1.7 0 11-2.4 2.4l-.05-.05a1.4 1.4 0 00-1.54-.28 1.4 1.4 0 00-.84 1.28v.14a1.7 1.7 0 11-3.4 0v-.07a1.4 1.4 0 00-.92-1.28 1.4 1.4 0 00-1.54.28l-.05.05a1.7 1.7 0 11-2.4-2.4l.05-.05a1.4 1.4 0 00.28-1.54 1.4 1.4 0 00-1.28-.84H2.3a1.7 1.7 0 110-3.4h.07a1.4 1.4 0 001.28-.92 1.4 1.4 0 00-.28-1.54l-.05-.05a1.7 1.7 0 112.4-2.4l.05.05a1.4 1.4 0 001.54.28h.07a1.4 1.4 0 00.84-1.28V2.3a1.7 1.7 0 113.4 0v.07a1.4 1.4 0 00.84 1.28 1.4 1.4 0 001.54-.28l.05-.05a1.7 1.7 0 112.4 2.4l-.05.05a1.4 1.4 0 00-.28 1.54v.07a1.4 1.4 0 001.28.84h.14a1.7 1.7 0 110 3.4h-.07a1.4 1.4 0 00-1.28.84z" stroke={t.textMuted} strokeWidth="1.5"/>
               </svg>
-            </MaybeLayoutButton>
+            </button>
           </header>
 
           {/* Cross-study button (fixed, outside scroll area) */}
           {totalWords > 0 && (
-            <MaybeLayoutButton isActive={transitionOriginId === "crossSetup-home"} layoutId="crossSetup-home" style={s.crossStudyBtn} onClick={() => { setTransitionOriginId("crossSetup-home"); setActiveFolder(null); setView("crossSetup"); }}>
+            <button style={s.crossStudyBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => { setActiveFolder(null); setView("crossSetup"); }); }}>
               <span style={{ fontSize: "16px" }}>🔀</span>
               <div>
                 <span style={{ fontSize: "14px", fontWeight: "600", color: t.text }}>横断学習</span>
                 <span style={{ fontSize: "12px", color: t.textMuted, marginLeft: "8px" }}>全{totalWords}語から出題</span>
               </div>
-            </MaybeLayoutButton>
+            </button>
           )}
 
           <div style={s.scrollWrapper}>
@@ -1501,7 +1527,7 @@ export default function RapidCycleApp() {
                 const isCollapsed = collapsedFolders[folder.id];
                 return (
                   <div key={folder.id} style={{ marginBottom: "8px" }}>
-                    <MaybeLayoutDiv isActive={transitionOriginId === `folder-${folder.id}`} layoutId={`folder-${folder.id}`} style={s.deckCard}>
+                    <div style={s.deckCard}>
                       <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
                         <div style={{ ...s.deckInfo, flexDirection: "row", alignItems: "center", gap: "10px" }} onClick={() => toggleFolderCollapse(folder.id)}>
                           <span style={{ fontSize: "12px", color: t.textMuted, transition: "transform 0.2s", transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)" }}>▼</span>
@@ -1511,10 +1537,10 @@ export default function RapidCycleApp() {
                           </div>
                         </div>
                         <div style={s.deckActions}>
-                          <button style={s.deckPlayBtn} onClick={() => { setTransitionOriginId(`folder-${folder.id}`); setActiveFolder(folder); setView("folder"); }}>→</button>
+                          <button style={s.deckPlayBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => { setActiveFolder(folder); setView("folder"); }); }}>→</button>
                         </div>
                       </div>
-                    </MaybeLayoutDiv>
+                    </div>
                     {!isCollapsed && folderDecks.length > 0 && (
                       <div style={{ marginLeft: "16px", borderLeft: `2px solid ${t.borderLight}`, paddingLeft: "12px", marginTop: "4px" }}>
                         {folderDecks.map(renderDeckItem)}
@@ -1556,9 +1582,9 @@ export default function RapidCycleApp() {
               <>
                 <div style={s.fabBackdrop} onClick={() => setShowAddMenu(false)} />
                 <div style={s.fabMenu}>
-                  <MaybeLayoutButton isActive={transitionOriginId === "import-btn"} layoutId="import-btn" style={s.fabMenuItem} onClick={() => { setTransitionOriginId("import-btn"); setShowAddMenu(false); setView("import"); }}>
+                  <button style={s.fabMenuItem} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => { setShowAddMenu(false); setView("import"); }); }}>
                     <span style={{ fontSize: "16px" }}>📚</span> 単語帳を追加
-                  </MaybeLayoutButton>
+                  </button>
                   <button style={s.fabMenuItem} onClick={() => { setShowAddMenu(false); setShowNewFolder(true); }}>
                     <span style={{ fontSize: "16px" }}>📁</span> フォルダを作成
                   </button>
@@ -1600,10 +1626,10 @@ export default function RapidCycleApp() {
     const folderWords = folderDecks.reduce((sum, d) => sum + d.words.length, 0);
 
     return (
-      <motion.div key="folder" layoutId={transitionOriginId === `folder-${activeFolder.id}` ? `folder-${activeFolder.id}` : undefined} style={{ ...s.shell, borderRadius: 0 }} transition={SPRING_TRANSITION} onLayoutAnimationComplete={() => setTransitionOriginId(null)}>
-        <div style={s.page}>
+      <motion.div key="folder" style={s.shell}>
+        <div style={{ ...s.page, animation: "fadeInUp 400ms cubic-bezier(0.22, 1, 0.36, 1) both", animationDelay: "100ms" }}>
           <header style={s.subHeader}>
-            <button style={s.backBtn} onClick={() => { setTransitionOriginId(`folder-${activeFolder.id}`); setView("home"); }}>← 戻る</button>
+            <button style={s.backBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => setView("home")); }}>← 戻る</button>
             <h2 style={s.subTitle}>📁 {activeFolder.name}</h2>
           </header>
 
@@ -1611,13 +1637,13 @@ export default function RapidCycleApp() {
           <div style={s.scrollArea}>
           {/* Folder cross-study */}
           {folderWords > 0 && (
-            <MaybeLayoutButton isActive={transitionOriginId === `crossSetup-${activeFolder.id}`} layoutId={`crossSetup-${activeFolder.id}`} style={s.crossStudyBtn} onClick={() => { setTransitionOriginId(`crossSetup-${activeFolder.id}`); setView("crossSetup"); }}>
+            <button style={s.crossStudyBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => setView("crossSetup")); }}>
               <span style={{ fontSize: "16px" }}>🔀</span>
               <div>
                 <span style={{ fontSize: "14px", fontWeight: "600", color: t.text }}>フォルダ横断学習</span>
                 <span style={{ fontSize: "12px", color: t.textMuted, marginLeft: "8px" }}>{folderWords}語から出題</span>
               </div>
-            </MaybeLayoutButton>
+            </button>
           )}
 
           {folderDecks.length === 0 ? (
@@ -1633,17 +1659,17 @@ export default function RapidCycleApp() {
                 const wc = deck.words.length;
                 const studied = deck.words.filter(w => stats[statsKey(w)]?.seen > 0).length;
                 return (
-                  <MaybeLayoutDiv key={deck.id} isActive={transitionOriginId === `deck-${deck.id}`} layoutId={`deck-${deck.id}`} style={s.deckCard}>
+                  <div key={deck.id} style={s.deckCard}>
                     <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
-                      <div style={s.deckInfo} onClick={() => { setTransitionOriginId(`deck-${deck.id}`); setActiveDeck(deck); setView("detail"); }}>
+                      <div style={s.deckInfo} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => { setActiveDeck(deck); setView("detail"); }); }}>
                         <span style={s.deckName}>{deck.name}</span>
                         <span style={s.deckMeta}>{wc}語 · {studied}語 学習済み</span>
                       </div>
                       <div style={s.deckActions}>
-                        <MaybeLayoutButton isActive={transitionOriginId === `study-${deck.id}`} layoutId={`study-${deck.id}`} style={s.deckPlayBtn} onClick={() => { setTransitionOriginId(`study-${deck.id}`); startStudy(deck); }}>▶</MaybeLayoutButton>
+                        <button style={s.deckPlayBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => startStudy(deck)); }}>▶</button>
                       </div>
                     </div>
-                  </MaybeLayoutDiv>
+                  </div>
                 );
               })}
             </div>
@@ -1712,10 +1738,10 @@ export default function RapidCycleApp() {
 
     const crossSetupId = activeFolder ? `crossSetup-${activeFolder.id}` : "crossSetup-home";
     return (
-      <motion.div key="crossSetup" layoutId={transitionOriginId === crossSetupId ? crossSetupId : undefined} style={{ ...s.shell, borderRadius: 0 }} transition={SPRING_TRANSITION} onLayoutAnimationComplete={() => setTransitionOriginId(null)}>
-        <div style={s.page}>
+      <motion.div key="crossSetup" style={s.shell}>
+        <div style={{ ...s.page, animation: "fadeInUp 400ms cubic-bezier(0.22, 1, 0.36, 1) both", animationDelay: "100ms" }}>
           <header style={s.subHeader}>
-            <button style={s.backBtn} onClick={() => { setTransitionOriginId(crossSetupId); setView(activeFolder ? "folder" : "home"); }}>← 戻る</button>
+            <button style={s.backBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => setView(activeFolder ? "folder" : "home")); }}>← 戻る</button>
             <h2 style={s.subTitle}>横断学習</h2>
           </header>
 
@@ -1756,15 +1782,13 @@ export default function RapidCycleApp() {
             </div>
           </div>
 
-          <MaybeLayoutButton
-            isActive={transitionOriginId === "study-__cross__"}
-            layoutId="study-__cross__"
+          <button
             style={{ ...s.primaryBtn, marginTop: "20px", opacity: filteredCount > 0 ? 1 : 0.4 }}
             disabled={filteredCount === 0}
-            onClick={() => { setTransitionOriginId("study-__cross__"); startCrossStudy(sourceDecks, crossFilter, crossCount, `${sourceLabel}（横断）`); }}
+            onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => startCrossStudy(sourceDecks, crossFilter, crossCount, `${sourceLabel}（横断）`)); }}
           >
             {crossCount === null ? filteredCount : Math.min(filteredCount, crossCount)}語で学習開始
-          </MaybeLayoutButton>
+          </button>
           </div>
           <div style={s.scrollFade} />
           </div>{/* scrollWrapper */}
@@ -1872,10 +1896,10 @@ export default function RapidCycleApp() {
       : words.filter(w => getMemoryLevel(w).level === parseInt(detailFilter));
 
     return (
-      <motion.div key="detail" layoutId={transitionOriginId === `deck-${activeDeck.id}` ? `deck-${activeDeck.id}` : undefined} style={{ ...s.shell, borderRadius: 0 }} transition={SPRING_TRANSITION} onLayoutAnimationComplete={() => setTransitionOriginId(null)}>
-        <div style={s.page}>
+      <motion.div key="detail" style={s.shell}>
+        <div style={{ ...s.page, animation: "fadeInUp 400ms cubic-bezier(0.22, 1, 0.36, 1) both", animationDelay: "100ms" }}>
           <header style={s.subHeader}>
-            <button style={s.backBtn} onClick={() => { setTransitionOriginId(`deck-${activeDeck.id}`); setView("home"); setEditingIdx(null); setDetailFilter("all"); setDetailCount(null); setIsRenamingDeck(false); }}>← 戻る</button>
+            <button style={s.backBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => { setView("home"); setEditingIdx(null); setDetailFilter("all"); setDetailCount(null); setIsRenamingDeck(false); }); }}>← 戻る</button>
             {isRenamingDeck ? (
               <div style={s.renameRow}>
                 <input
@@ -1911,17 +1935,15 @@ export default function RapidCycleApp() {
 
           {/* Actions */}
           <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
-            <MaybeLayoutButton
-              isActive={transitionOriginId === `study-${activeDeck.id}`}
-              layoutId={`study-${activeDeck.id}`}
+            <button
               style={{ ...s.primaryBtn, flex: 1, opacity: filteredWords.length > 0 ? 1 : 0.4 }}
               disabled={filteredWords.length === 0}
-              onClick={() => {
+              onClick={(e) => {
                 const studyWords = detailCount === null || filteredWords.length <= detailCount
                   ? filteredWords
                   : shuffle([...filteredWords]).slice(0, detailCount);
-                setTransitionOriginId(`study-${activeDeck.id}`);
-                startStudy(activeDeck, studyWords);
+                const r = e.currentTarget.getBoundingClientRect();
+                startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => startStudy(activeDeck, studyWords));
               }}
             >
               {(() => {
@@ -1930,7 +1952,7 @@ export default function RapidCycleApp() {
                   : detailCount;
                 return `${n}語で学習する`;
               })()}
-            </MaybeLayoutButton>
+            </button>
             <button style={{ ...s.exportBtn, borderColor: exportCopied ? "rgba(74, 222, 128, 0.3)" : t.borderLight }} onClick={exportDeck}>
               {exportCopied ? (
                 <span style={{ fontSize: "11px", color: "#4ade80", fontWeight: "600" }}>✓</span>
@@ -2200,10 +2222,10 @@ export default function RapidCycleApp() {
   // ── SETTINGS ──
   if (view === "settings") {
     return (
-      <motion.div key="settings" layoutId={transitionOriginId === "settings-btn" ? "settings-btn" : undefined} style={{ ...s.shell, borderRadius: 0 }} transition={SPRING_TRANSITION} onLayoutAnimationComplete={() => setTransitionOriginId(null)}>
-        <div style={s.page}>
+      <motion.div key="settings" style={s.shell}>
+        <div style={{ ...s.page, animation: "fadeInUp 400ms cubic-bezier(0.22, 1, 0.36, 1) both", animationDelay: "100ms" }}>
           <header style={s.subHeader}>
-            <button style={s.backBtn} onClick={() => { setTransitionOriginId("settings-btn"); setView("home"); }}>← 戻る</button>
+            <button style={s.backBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => setView("home")); }}>← 戻る</button>
             <h2 style={s.subTitle}>設定</h2>
           </header>
 
@@ -2652,10 +2674,10 @@ export default function RapidCycleApp() {
   if (view === "import") {
     const preview = importText ? parseCSV(importText) : [];
     return (
-      <motion.div key="import" layoutId={transitionOriginId === "import-btn" ? "import-btn" : undefined} style={{ ...s.shell, borderRadius: 0 }} transition={SPRING_TRANSITION} onLayoutAnimationComplete={() => setTransitionOriginId(null)}>
-        <div style={s.page}>
+      <motion.div key="import" style={s.shell}>
+        <div style={{ ...s.page, animation: "fadeInUp 400ms cubic-bezier(0.22, 1, 0.36, 1) both", animationDelay: "100ms" }}>
           <header style={s.subHeader}>
-            <button style={s.backBtn} onClick={() => { setTransitionOriginId("import-btn"); setView("home"); setImportText(""); setDeckName(""); }}>← 戻る</button>
+            <button style={s.backBtn} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); startNavTransition(r.left + r.width / 2, r.top + r.height / 2, () => { setView("home"); setImportText(""); setDeckName(""); }); }}>← 戻る</button>
             <h2 style={s.subTitle}>単語帳を追加</h2>
           </header>
 
@@ -2788,7 +2810,7 @@ export default function RapidCycleApp() {
     };
 
     return (
-      <motion.div key="study" layoutId={transitionOriginId ?? undefined} style={{ ...s.shell, borderRadius: 0 }} transition={SPRING_TRANSITION} onLayoutAnimationComplete={() => setTransitionOriginId(null)}>
+      <motion.div key="study" style={s.shell}>
         <div style={s.studyPage}>
           {/* Header */}
           <div style={s.studyNav}>
@@ -2974,12 +2996,47 @@ export default function RapidCycleApp() {
   return null;
   }; // end renderView
 
+  const overlayBg = settings.theme === "dark"
+    ? "rgba(17, 17, 17, 0.8)"
+    : "rgba(245, 245, 247, 0.85)";
+
   return (
-    <LayoutGroup>
+    <>
+      <style>{`
+        @keyframes fadeInUp {
+          from { opacity: 0; transform: translateY(15px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
       <AnimatePresence mode="popLayout" initial={false}>
         {renderView()}
       </AnimatePresence>
-    </LayoutGroup>
+      {navTransition && (
+        <div
+          ref={overlayRef}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 50,
+            pointerEvents: navTransition.phase === "expanding" ? "all" : "none",
+            backdropFilter: "blur(10px)",
+            WebkitBackdropFilter: "blur(10px)",
+            backgroundColor: overlayBg,
+            willChange: "clip-path, opacity",
+            ...(navTransition.phase === "expanding" ? {
+              clipPath: `circle(0px at ${navTransition.x}px ${navTransition.y}px)`,
+              transition: "clip-path 350ms cubic-bezier(0.32, 0.72, 0, 1)",
+            } : navTransition.phase === "revealing" ? {
+              clipPath: `circle(${Math.hypot(window.innerWidth, window.innerHeight)}px at ${navTransition.x}px ${navTransition.y}px)`,
+              opacity: 0,
+              transition: "opacity 350ms ease-out",
+            } : {
+              clipPath: `circle(${Math.hypot(window.innerWidth, window.innerHeight)}px at ${navTransition.x}px ${navTransition.y}px)`,
+            }),
+          }}
+        />
+      )}
+    </>
   );
 }
 
