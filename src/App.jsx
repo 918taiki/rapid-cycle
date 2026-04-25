@@ -323,6 +323,11 @@ export default function RapidCycleApp() {
   const [settings, setSettings] = useState(() => loadFromStorage(STORAGE_KEY_SETTINGS, DEFAULT_SETTINGS));
   const t = THEMES[settings.theme || "dark"];
   const s = useMemo(() => makeStyles(t), [t]);
+  useEffect(() => {
+    document.body.style.background = t.bg;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", t.bg);
+  }, [t.bg]);
   const [folders, setFolders] = useState(() => loadFromStorage(STORAGE_KEY_FOLDERS, []));
   const [activeDeck, setActiveDeck] = useState(null);
   const [activeFolder, setActiveFolder] = useState(null);
