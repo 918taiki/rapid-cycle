@@ -1489,7 +1489,7 @@ export default function RapidCycleApp() {
                 const folderWords = folderDecks.reduce((sum, d) => sum + d.words.length, 0);
                 const isCollapsed = collapsedFolders[folder.id];
                 return (
-                  <div key={folder.id} style={{ marginBottom: "8px" }}>
+                  <div key={folder.id}>
                     <div style={s.deckCard}>
                       <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
                         <div style={{ ...s.deckInfo, flexDirection: "row", alignItems: "center", gap: "10px" }} onClick={() => toggleFolderCollapse(folder.id)}>
@@ -1504,11 +1504,22 @@ export default function RapidCycleApp() {
                         </div>
                       </div>
                     </div>
-                    {!isCollapsed && folderDecks.length > 0 && (
-                      <div style={{ marginLeft: "16px", borderLeft: `2px solid ${t.borderLight}`, paddingLeft: "12px", marginTop: "4px" }}>
-                        {folderDecks.map(renderDeckItem)}
-                      </div>
-                    )}
+                    <AnimatePresence initial={false}>
+                      {!isCollapsed && folderDecks.length > 0 && (
+                        <motion.div
+                          key="folder-children"
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: "auto", opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+                          style={{ overflow: "hidden" }}
+                        >
+                          <div style={{ marginLeft: "16px", borderLeft: `2px solid ${t.borderLight}`, paddingLeft: "12px", paddingTop: "4px" }}>
+                            {folderDecks.map(renderDeckItem)}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 );
               })}
