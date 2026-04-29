@@ -1146,6 +1146,56 @@ export default function RapidCycleApp() {
     return 1;
   };
 
+  // 単語リストの記憶度内訳（重複排除）
+  const getMemoryBreakdown = (words) => {
+    const seen = new Set();
+    let total = 0, l0 = 0, l1 = 0, l2 = 0, l3 = 0;
+    for (const w of words) {
+      const k = statsKey(w);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      total++;
+      const lv = getMemoryLevelForWord(w);
+      if (lv === 3) l3++;
+      else if (lv === 2) l2++;
+      else if (lv === 1) l1++;
+      else l0++;
+    }
+    return { total, l0, l1, l2, l3 };
+  };
+
+  // 記憶度バー（5%刻み20分割）+ 定着率%。カード右側のスペースに配置
+  const renderMemoryBar = (words) => {
+    const { total, l0, l1, l2, l3 } = getMemoryBreakdown(words);
+    if (total === 0) return null;
+    const pct = Math.round((l3 / total) * 100);
+    const SEG = 20;
+    const order = [l3, l2, l1, l0];
+    const colors = ["#4ade80", "#facc15", "#f87171", t.textFaint];
+    const raw = order.map(c => (c / total) * SEG);
+    const counts = raw.map(r => Math.floor(r));
+    let used = counts.reduce((a, b) => a + b, 0);
+    const remainders = raw
+      .map((r, i) => ({ i, frac: r - Math.floor(r), orig: order[i] }))
+      .sort((a, b) => b.frac - a.frac || b.orig - a.orig);
+    let k = 0;
+    while (used < SEG) {
+      counts[remainders[k % remainders.length].i]++;
+      used++;
+      k++;
+    }
+    return (
+      <div style={{ width: "28%", flexShrink: 0, display: "flex", flexDirection: "column", gap: "4px", paddingRight: "10px", paddingLeft: "4px" }}>
+        <span style={{ fontSize: "12px", color: t.textMuted, fontVariantNumeric: "tabular-nums", textAlign: "right", fontWeight: "600" }}>{pct}%</span>
+        <div style={{ display: "flex", height: "6px", borderRadius: "3px", overflow: "hidden", background: t.borderLight, gap: "1px" }}>
+          {counts.map((cnt, idx) => cnt > 0 && (
+            <div key={idx} style={{ width: `${cnt * 5}%`, background: colors[idx] }} />
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   // Cross-study: gather words from multiple decks, apply filter & count
   const startCrossStudy = (sourcDecks, filter, count, label) => {
     let allWords = sourcDecks.flatMap(d => d.words);
@@ -1434,6 +1484,7 @@ export default function RapidCycleApp() {
               <span style={s.deckName}>{deck.name}</span>
               <span style={s.deckMeta}>{wc}語 · {studied}語 学習済み</span>
             </div>
+            {renderMemoryBar(deck.words)}
             <div style={s.deckActions}>
               <button style={s.deckPlayBtn} onClick={() => startStudy(deck)}>▶</button>
             </div>
@@ -1499,11 +1550,12 @@ export default function RapidCycleApp() {
                       <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
                         <div style={{ ...s.deckInfo, flexDirection: "row", alignItems: "center", gap: "10px" }} onClick={() => toggleFolderCollapse(folder.id)}>
                           <span style={{ fontSize: "12px", color: t.textMuted, transition: "transform 0.2s", transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)" }}>▼</span>
-                          <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: "2px", flex: 1, minWidth: 0 }}>
                             <span style={s.deckName}>📁 {folder.name}</span>
                             <span style={s.deckMeta}>{folderDecks.length}冊 · {folderWords}語</span>
                           </div>
                         </div>
+                        {renderMemoryBar(folderDecks.flatMap(d => d.words))}
                         <div style={s.deckActions}>
                           <button style={s.deckPlayBtn} onClick={() => { setActiveFolder(folder); setView("folder"); }}>→</button>
                         </div>
@@ -1644,6 +1696,7 @@ export default function RapidCycleApp() {
                         <span style={s.deckName}>{deck.name}</span>
                         <span style={s.deckMeta}>{wc}語 · {studied}語 学習済み</span>
                       </div>
+                      {renderMemoryBar(deck.words)}
                       <div style={s.deckActions}>
                         <button style={s.deckPlayBtn} onClick={() => startStudy(deck)}>▶</button>
                       </div>
