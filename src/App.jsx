@@ -1164,11 +1164,22 @@ export default function RapidCycleApp() {
     return { total, l0, l1, l2, l3 };
   };
 
-  // 記憶度バー（5%刻み20分割）+ 定着率%。カード右側のスペースに配置
+  // 記憶度バー（5%刻み20分割）+ 記憶度%（学習済みのみのスコア平均、詳細画面と同じ算出）
   const renderMemoryBar = (words) => {
     const { total, l0, l1, l2, l3 } = getMemoryBreakdown(words);
     if (total === 0) return null;
-    const pct = Math.round((l3 / total) * 100);
+    const seen = new Set();
+    let scoreSum = 0, studiedCount = 0;
+    for (const w of words) {
+      const k = statsKey(w);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const st = stats[k];
+      if (!st || st.seen === 0) continue;
+      scoreSum += getMemoryScore(w);
+      studiedCount++;
+    }
+    const pct = studiedCount === 0 ? null : Math.round((scoreSum / studiedCount) * 100);
     const SEG = 20;
     const order = [l3, l2, l1, l0];
     const colors = ["#4ade80", "#facc15", "#f87171", t.textFaint];
@@ -1186,7 +1197,7 @@ export default function RapidCycleApp() {
     }
     return (
       <div style={{ width: "28%", flexShrink: 0, display: "flex", flexDirection: "column", gap: "4px", paddingRight: "10px", paddingLeft: "4px" }}>
-        <span style={{ fontSize: "12px", color: t.textMuted, fontVariantNumeric: "tabular-nums", textAlign: "right", fontWeight: "600" }}>{pct}%</span>
+        <span style={{ fontSize: "12px", color: t.textMuted, fontVariantNumeric: "tabular-nums", textAlign: "right", fontWeight: "600" }}>{pct === null ? "—" : `${pct}%`}</span>
         <div style={{ display: "flex", height: "6px", borderRadius: "3px", overflow: "hidden", background: t.borderLight, gap: "1px" }}>
           {counts.map((cnt, idx) => cnt > 0 && (
             <div key={idx} style={{ width: `${cnt * 5}%`, background: colors[idx] }} />
