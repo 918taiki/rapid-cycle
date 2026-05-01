@@ -3424,6 +3424,11 @@ export default function RapidCycleApp() {
                   単語リストを見る
                 </button>
               )}
+              {studySourceLabel === "今日の復習" && (
+                <button style={s.ghostBtn} onClick={() => setView("review")}>
+                  復習画面に戻る
+                </button>
+              )}
               <button style={s.ghostBtn} onClick={() => setView("home")}>
                 ホームに戻る
               </button>
