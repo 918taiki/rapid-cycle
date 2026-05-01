@@ -487,6 +487,8 @@ export default function RapidCycleApp() {
   const [sessionWords, setSessionWords] = useState([]);
   const animIdRef = useRef(0);
   const sessionIdRef = useRef("");
+  const swipeLockRef = useRef(false);
+  const touchCardRef = useRef(null);
 
   // デバウンス発火時に最新 decks を参照するための Ref
   const decksRef = useRef(decks);
@@ -1440,6 +1442,9 @@ export default function RapidCycleApp() {
 
   // Dismiss with trajectory based on swipe end position and velocity
   const dismissCard = (direction, correct, card, swipeEndX, swipeEndY) => {
+    swipeLockRef.current = true;
+    scheduleTimeout(() => { swipeLockRef.current = false; }, 120);
+
     const wasFlipped = flipped;
     const id = ++animIdRef.current;
 
@@ -1517,6 +1522,8 @@ export default function RapidCycleApp() {
   const [swipeY, setSwipeY] = useState(0);
 
   const onTouchStart = (e) => {
+    if (swipeLockRef.current) return;
+    touchCardRef.current = currentCard;
     const touch = e.touches[0];
     setSwipeStartX(touch.clientX);
     setSwipeStartY(touch.clientY);
@@ -1547,7 +1554,9 @@ export default function RapidCycleApp() {
   };
 
   const onTouchEnd = () => {
-    if (isHorizontalSwipe && Math.abs(swipeX) > SWIPE_THRESHOLD) {
+    const cardMismatch = touchCardRef.current !== null && touchCardRef.current !== currentCard;
+
+    if (!cardMismatch && isHorizontalSwipe && Math.abs(swipeX) > SWIPE_THRESHOLD) {
       const isCorrect = swipeX > 0;
 
       if (waitingForTap) {
@@ -1567,6 +1576,7 @@ export default function RapidCycleApp() {
     setSwipeStartX(null);
     setSwipeStartY(null);
     setIsHorizontalSwipe(null);
+    touchCardRef.current = null;
   };
 
   // ─── IMPORT HANDLERS ───
