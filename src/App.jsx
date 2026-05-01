@@ -24,6 +24,7 @@ const DEFAULT_SETTINGS = {
   memoryReappear: true,
   theme: "dark",
   gasUrl: "",
+  reviewIntervalScale: 1.0,
 };
 
 const THEMES = {
@@ -207,6 +208,116 @@ function computeMemoryScore(stats, w) {
   return accuracy * 0.6 + peekRatio * 0.4;
 }
 
+// ─── REVIEW (spaced repetition) ───
+function getSessionVerdicts(stats, w) {
+  const key = typeof w === "object" ? statsKey(w) : w;
+  const st = stats[key];
+  if (!st || !st.log || st.log.length === 0) return [];
+  const seen = new Set();
+  const out = [];
+  for (const entry of st.log) {
+    if ((entry.round || 1) !== 1) continue;
+    const sid = entry.sid || `legacy_${entry.date}`;
+    if (seen.has(sid)) continue;
+    seen.add(sid);
+    out.push({ sid, correct: !!entry.correct, peeked: !!entry.peeked, date: entry.date });
+  }
+  return out;
+}
+
+function computeNextDueAt(stats, w, settings) {
+  const verdicts = getSessionVerdicts(stats, w);
+  if (verdicts.length === 0) return null;
+
+  // Pick verdict for interval decision: most recent non-peek; fallback to latest
+  let chosen = null;
+  for (let i = verdicts.length - 1; i >= 0; i--) {
+    if (!verdicts[i].peeked) { chosen = verdicts[i]; break; }
+  }
+  const allPeeked = chosen === null;
+  if (allPeeked) chosen = verdicts[verdicts.length - 1];
+
+  // Streak count: skip peek sessions; +1 on non-peek correct; break on non-peek incorrect
+  let streak = 0;
+  for (let i = verdicts.length - 1; i >= 0; i--) {
+    const v = verdicts[i];
+    if (v.peeked) continue;
+    if (v.correct) streak++;
+    else break;
+  }
+
+  const DAY = 24 * 60 * 60 * 1000;
+  let intervalMs;
+  if (!chosen.correct) {
+    intervalMs = 10 * 60 * 1000; // 10 min
+  } else if (allPeeked) {
+    intervalMs = 1 * DAY;
+  } else if (streak <= 1) {
+    intervalMs = 1 * DAY;
+  } else if (streak === 2) {
+    intervalMs = 3 * DAY;
+  } else if (streak === 3) {
+    intervalMs = 7 * DAY;
+  } else if (streak === 4) {
+    intervalMs = 14 * DAY;
+  } else if (streak === 5) {
+    intervalMs = 30 * DAY;
+  } else {
+    intervalMs = 60 * DAY;
+  }
+
+  const scale = (settings && typeof settings.reviewIntervalScale === "number") ? settings.reviewIntervalScale : 1.0;
+  intervalMs *= scale;
+
+  // Memory score adjustment
+  const score = computeMemoryScore(stats, w);
+  if (score >= 0.85) intervalMs *= 1.4;
+  else if (score < 0.4) intervalMs *= 0.6;
+
+  const key = typeof w === "object" ? statsKey(w) : w;
+  const log = stats[key].log;
+  const lastSessionDate = log[log.length - 1].date;
+  return new Date(lastSessionDate).getTime() + intervalMs;
+}
+
+function isDueForReview(stats, w, settings, now = Date.now()) {
+  const due = computeNextDueAt(stats, w, settings);
+  if (due === null) return false;
+  return now >= due;
+}
+
+function getOverdueMs(stats, w, settings, now = Date.now()) {
+  const due = computeNextDueAt(stats, w, settings);
+  if (due === null) return null;
+  return now - due;
+}
+
+function getOverdueBucket(stats, w, settings, now = Date.now()) {
+  const od = getOverdueMs(stats, w, settings, now);
+  if (od === null || od < 0) return null;
+  const DAY = 24 * 60 * 60 * 1000;
+  if (od < 1 * DAY) return "due";
+  if (od < 3 * DAY) return "1day";
+  return "3days";
+}
+
+function collectDueWords(decks, stats, settings, now = Date.now()) {
+  const seen = new Set();
+  const items = [];
+  for (const d of decks) {
+    for (const w of d.words) {
+      const k = statsKey(w);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const od = getOverdueMs(stats, w, settings, now);
+      if (od === null || od < 0) continue;
+      items.push({ w, overdue: od });
+    }
+  }
+  items.sort((a, b) => b.overdue - a.overdue);
+  return items.map(it => it.w);
+}
+
 function parseCSV(text) {
   const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
   if (lines.length === 0) return [];
@@ -285,7 +396,7 @@ function formatRelativeDate(isoString) {
 
 // ─── MAIN COMPONENT ───
 export default function RapidCycleApp() {
-  const [view, setView] = useState("home"); // home | folder | detail | import | study | result | settings | crossSetup
+  const [view, setView] = useState("home"); // home | folder | detail | import | study | result | settings | crossSetup | review
   const [decks, setDecks] = useState(() => loadFromStorage(STORAGE_KEY_DECKS, []));
   const [stats, setStats] = useState(() => loadFromStorage(STORAGE_KEY_STATS, {}));
 
@@ -436,6 +547,12 @@ export default function RapidCycleApp() {
   const [exportCopied, setExportCopied] = useState(false);
   const [crossFilter, setCrossFilter] = useState("all");
   const [crossCount, setCrossCount] = useState(null); // null = 全部
+  // Review state
+  const [reviewFilter, setReviewFilter] = useState("all");
+  const [reviewOverdueFilter, setReviewOverdueFilter] = useState("all");
+  const [reviewCount, setReviewCount] = useState(null);
+  const [reviewPreviewKey, setReviewPreviewKey] = useState(null);
+  const [reviewPreviewFlipped, setReviewPreviewFlipped] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [showAddMenu, setShowAddMenu] = useState(false);
@@ -464,6 +581,8 @@ export default function RapidCycleApp() {
       swipeBackRef.current = () => setView(activeFolder ? "folder" : "home");
     } else if (view === "settings") {
       swipeBackRef.current = () => setView("home");
+    } else if (view === "review") {
+      swipeBackRef.current = () => { setView("home"); setReviewFilter("all"); setReviewOverdueFilter("all"); setReviewCount(null); setReviewPreviewKey(null); };
     } else if (view === "import") {
       swipeBackRef.current = () => { setView("home"); setImportText(""); setDeckName(""); };
     } else if (view === "result") {
@@ -1484,6 +1603,7 @@ export default function RapidCycleApp() {
   if (view === "home") {
     const unfiledDecks = getUnfiledDecks();
     const totalWords = decks.reduce((sum, d) => sum + d.words.length, 0);
+    const dueCount = collectDueWords(decks, stats, settings).length;
 
     const renderDeckItem = (deck) => {
       const wc = deck.words.length;
@@ -1535,6 +1655,20 @@ export default function RapidCycleApp() {
               <div>
                 <span style={{ fontSize: "14px", fontWeight: "600", color: t.text }}>横断学習</span>
                 <span style={{ fontSize: "12px", color: t.textMuted, marginLeft: "8px" }}>全{totalWords}語から出題</span>
+              </div>
+            </button>
+          )}
+
+          {/* Review button */}
+          {dueCount > 0 && (
+            <button
+              style={{ ...s.crossStudyBtn, border: "1px solid rgba(168, 85, 247, 0.35)" }}
+              onClick={() => setView("review")}
+            >
+              <span style={{ fontSize: "16px" }}>🔁</span>
+              <div>
+                <span style={{ fontSize: "14px", fontWeight: "600", color: t.text }}>今日の復習</span>
+                <span style={{ fontSize: "12px", color: t.textMuted, marginLeft: "8px" }}>{dueCount}語が復習対象</span>
               </div>
             </button>
           )}
@@ -2261,6 +2395,247 @@ export default function RapidCycleApp() {
     );
   }
 
+  // ── REVIEW ──
+  if (view === "review") {
+    const dueWords = collectDueWords(decks, stats, settings);
+
+    const getMemLevel = (w) => {
+      const key = statsKey(w);
+      const score = computeMemoryScore(stats, w);
+      const st = stats[key];
+      if (!st || st.seen === 0) return { level: 0, label: "未学習", color: t.textMuted, score: 0 };
+      if (score >= 0.85) return { level: 3, label: "定着", color: "#4ade80", score };
+      if (score >= 0.55) return { level: 2, label: "あと少し", color: "#facc15", score };
+      return { level: 1, label: "要復習", color: "#f87171", score };
+    };
+
+    const memFiltered = reviewFilter === "all"
+      ? dueWords
+      : dueWords.filter(w => getMemLevel(w).level === parseInt(reviewFilter));
+    const overdueFilters = [
+      { key: "all", label: "すべて" },
+      { key: "due", label: "期限到来" },
+      { key: "1day", label: "1日超過" },
+      { key: "3days", label: "3日以上" },
+    ];
+    const filteredWords = reviewOverdueFilter === "all"
+      ? memFiltered
+      : memFiltered.filter(w => getOverdueBucket(stats, w, settings) === reviewOverdueFilter);
+
+    const memFilters = [
+      { key: "all", label: "全て" },
+      { key: "0", label: "未学習" },
+      { key: "1", label: "要復習" },
+      { key: "2", label: "あと少し" },
+      { key: "3", label: "定着" },
+    ];
+
+    const previewW = reviewPreviewKey !== null ? filteredWords.find(w => statsKey(w) === reviewPreviewKey) : null;
+
+    const startReview = () => {
+      const limited = reviewCount === null || filteredWords.length <= reviewCount
+        ? filteredWords
+        : filteredWords.slice(0, reviewCount);
+      if (limited.length === 0) return;
+      const tempDeck = { id: "__cross__", name: "今日の復習", words: limited };
+      setStudySourceLabel("今日の復習");
+      startStudy(tempDeck);
+    };
+
+    return (
+      <motion.div key="review" style={s.shell} initial={{ opacity: 0, scale: 1.02 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}>
+        <div style={s.page}>
+          <header style={s.subHeader}>
+            <button style={s.backBtn} onClick={() => { setView("home"); setReviewFilter("all"); setReviewOverdueFilter("all"); setReviewCount(null); setReviewPreviewKey(null); }}>← 戻る</button>
+            <h2 style={s.subTitle}>🔁 復習</h2>
+          </header>
+
+          <p style={{ fontSize: "13px", color: t.textMuted, margin: "0 0 16px" }}>
+            {dueWords.length}語が復習対象
+          </p>
+
+          {/* Action button */}
+          <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+            <button
+              style={{ ...s.primaryBtn, flex: 1, opacity: filteredWords.length > 0 ? 1 : 0.4 }}
+              disabled={filteredWords.length === 0}
+              onClick={startReview}
+            >
+              {(() => {
+                const n = reviewCount === null || filteredWords.length <= reviewCount
+                  ? filteredWords.length
+                  : reviewCount;
+                return `${n}語で学習する`;
+              })()}
+            </button>
+          </div>
+
+          {/* Count selector */}
+          <div style={{ ...s.filterRow, marginBottom: "6px" }}>
+            {[{ label: "全て", value: null }, { label: "10語", value: 10 }, { label: "20語", value: 20 }, { label: "50語", value: 50 }].map(opt => (
+              <button
+                key={String(opt.value)}
+                onClick={() => setReviewCount(opt.value)}
+                style={reviewCount === opt.value ? s.filterActive : s.filterInactive}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Memory filter */}
+          <div style={{ ...s.filterRow, marginBottom: "6px" }}>
+            {memFilters.map(f => (
+              <button
+                key={f.key}
+                onClick={() => setReviewFilter(f.key)}
+                style={reviewFilter === f.key ? s.filterActive : s.filterInactive}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Overdue filter */}
+          <div style={s.filterRow}>
+            {overdueFilters.map(f => (
+              <button
+                key={f.key}
+                onClick={() => setReviewOverdueFilter(f.key)}
+                style={reviewOverdueFilter === f.key ? s.filterActive : s.filterInactive}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Word list */}
+          <div style={s.scrollWrapper}>
+          <div style={s.scrollArea}>
+          <div style={s.wordList}>
+            {filteredWords.length === 0 && (
+              <p style={{ fontSize: "13px", color: t.textFaint, textAlign: "center", padding: "24px 0" }}>
+                該当する単語がありません
+              </p>
+            )}
+            {filteredWords.map((w) => {
+              const k = statsKey(w);
+              const mem = getMemLevel(w);
+              const st = getWordStats(stats, w);
+              return (
+                <div key={k} style={s.wordItem} onClick={() => { setReviewPreviewKey(k); setReviewPreviewFlipped(false); }}>
+                  <div style={s.wordItemLeft}>
+                    <div style={{ ...s.memoryDot, background: mem.color }} />
+                    <div style={s.wordItemText}>
+                      <span style={s.wordItemWord}>{w.word}</span>
+                      <span style={s.wordItemMeaning}>{w.meaning}</span>
+                    </div>
+                  </div>
+                  <div style={s.wordItemRight}>
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "2px" }}>
+                      <span style={{ ...s.memoryTag, color: mem.color, borderColor: mem.color }}>{mem.label}</span>
+                      {st.seen > 0 && (
+                        <span style={s.wordItemStats}>{Math.round(mem.score * 100)}%{(() => { const last = getLastStudied(stats, w); return last ? ` · ${formatRelativeDate(last)}` : ""; })()}</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          </div>
+          <div style={s.scrollFade} />
+          </div>
+
+          {/* Preview modal */}
+          {previewW && (() => {
+            const pw = previewW;
+            const pParts = highlightWord(pw.example_en, pw.word);
+            const pMem = getMemLevel(pw);
+            const pSt = getWordStats(stats, pw);
+            const deckId = wordToDeckMap.get(statsKey(pw));
+            const deck = deckId ? decks.find(d => d.id === deckId) : null;
+            const folder = deck && deck.folderId ? folders.find(f => f.id === deck.folderId) : null;
+            const sourceLabel = deck ? (folder ? `${folder.name} › ${deck.name}` : deck.name) : "";
+            return (
+              <div style={s.modalOverlay} onClick={() => setReviewPreviewKey(null)}>
+                <div style={{ width: "100%", maxWidth: "400px", display: "flex", flexDirection: "column", gap: "14px", perspective: "1200px" }} onClick={e => e.stopPropagation()}>
+                  {sourceLabel && (
+                    <p style={{ fontSize: "12px", color: t.textMuted, textAlign: "center", margin: 0 }}>{sourceLabel}</p>
+                  )}
+                  <div
+                    style={{ ...s.flipContainer, cursor: "pointer" }}
+                    onClick={() => setReviewPreviewFlipped(!reviewPreviewFlipped)}
+                  >
+                    <div style={{
+                      ...s.flipInner,
+                      transform: reviewPreviewFlipped ? "rotateY(180deg)" : "rotateY(0deg)",
+                      transition: "transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                    }}>
+                      <div style={s.flipFace}>
+                        <div style={{ ...s.card, height: "440px", margin: 0 }}>
+                          <div style={s.exampleArea}>
+                            {pw.example_en ? (
+                              <p style={s.exampleSentence}>
+                                {Array.isArray(pParts) ? pParts.map((part, i) => {
+                                  const isHl = part.toLowerCase().startsWith(pw.word.toLowerCase());
+                                  return isHl ? <span key={i} style={s.highlight}>{part}</span> : <span key={i}>{part}</span>;
+                                }) : pw.example_en}
+                              </p>
+                            ) : (
+                              <p style={{ ...s.exampleSentence, fontSize: "28px", fontWeight: "700", textAlign: "center", color: t.highlightText }}>
+                                {pw.word}
+                              </p>
+                            )}
+                          </div>
+                          <p style={s.tapHint}>タップで裏面を表示</p>
+                        </div>
+                      </div>
+                      <div style={{ ...s.flipFace, ...s.flipBack }}>
+                        <div style={{ ...s.card, height: "440px", margin: 0 }}>
+                          {pw.example_en && (
+                            <p style={{ ...s.exampleSentence, fontSize: "14px", color: t.textMuted }}>
+                              {Array.isArray(pParts) ? pParts.map((part, i) => {
+                                const isHl = part.toLowerCase().startsWith(pw.word.toLowerCase());
+                                return isHl ? <span key={i} style={{ ...s.highlight, fontSize: "14px" }}>{part}</span> : <span key={i}>{part}</span>;
+                              }) : pw.example_en}
+                            </p>
+                          )}
+                          <div style={s.cardDivider} />
+                          <div style={s.answerArea}>
+                            <div style={s.wordMeaning}>
+                              <span style={s.answerWord}>{pw.word}</span>
+                              <span style={s.answerMeaningText}>{pw.meaning}</span>
+                            </div>
+                            {pw.example_ja && <p style={s.answerTranslation}>{pw.example_ja}</p>}
+                            {pw.note && <p style={s.answerNote}>{pw.note}</p>}
+                          </div>
+                          <p style={s.tapHint}>タップで表面に戻す</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <button style={{ ...s.ghostBtn, flex: 1, padding: "12px" }} onClick={() => setReviewPreviewKey(null)}>
+                      閉じる
+                    </button>
+                  </div>
+
+                  <div style={{ display: "flex", justifyContent: "center", gap: "12px", fontSize: "12px", color: t.textMuted }}>
+                    <span style={{ color: pMem.color }}>{pMem.label}</span>
+                    {pSt.seen > 0 && <span>{Math.round(pMem.score * 100)}%</span>}
+                    {(() => { const last = getLastStudied(stats, pw); return last ? <span>{formatRelativeDate(last)}</span> : null; })()}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      </motion.div>
+    );
+  }
+
   // ── SETTINGS ──
   if (view === "settings") {
     return (
@@ -2363,6 +2738,30 @@ export default function RapidCycleApp() {
                 ONの場合、記憶度に応じて再登場率を自動調整します。
                 {"\n"}定着: ×0.3 / あと少し: ×0.7 / 要復習: ×1.3
               </p>
+            </div>
+
+            <div style={s.settingItem}>
+              <div style={s.settingHeader}>
+                <span style={s.settingName}>復習間隔</span>
+                <span style={s.settingValue}>
+                  {(() => {
+                    const v = settings.reviewIntervalScale ?? 1.0;
+                    const lab = v < 0.85 ? "短め" : v > 1.15 ? "長め" : "標準";
+                    return `${lab}（${v.toFixed(1)}×）`;
+                  })()}
+                </span>
+              </div>
+              <p style={s.settingDesc}>復習対象として再登場するまでの間隔を倍率で調整します。</p>
+              <input
+                type="range"
+                min="5" max="20" step="1"
+                value={Math.round((settings.reviewIntervalScale ?? 1.0) * 10)}
+                onChange={e => setSettings(prev => ({ ...prev, reviewIntervalScale: parseInt(e.target.value) / 10 }))}
+                style={s.slider}
+              />
+              <div style={s.sliderLabels}>
+                <span>短め</span><span>標準</span><span>長め</span>
+              </div>
             </div>
           </div>
 
