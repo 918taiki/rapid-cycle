@@ -46,31 +46,51 @@ const THEMES = {
     accent: "#a855f7",
     accentLight: "rgba(168, 85, 247, 0.06)",
     accentBorder: "rgba(168, 85, 247, 0.15)",
+    accentText: "#ffffff",
     overlay: "rgba(0, 0, 0, 0.7)",
     divider: "#2a2835",
     highlightText: "#e9b5ff",
+    success: "#4ade80",
+    successSoft: "rgba(74, 222, 128, 0.1)",
+    successBorder: "rgba(74, 222, 128, 0.3)",
+    warning: "#facc15",
+    warningSoft: "rgba(250, 204, 21, 0.1)",
+    warningBorder: "rgba(250, 204, 21, 0.3)",
+    danger: "#f87171",
+    dangerSoft: "rgba(248, 113, 113, 0.1)",
+    dangerBorder: "rgba(248, 113, 113, 0.3)",
   },
   light: {
-    bg: "#f5f5f7",
-    surface: "#ffffff",
-    surfaceAlt: "#f0f0f4",
-    border: "#e0e0e6",
-    borderLight: "#d8d8e0",
-    text: "#1a1a2e",
-    textSub: "#5a5a6e",
-    textMuted: "#8888a0",
-    textFaint: "#b0b0c0",
-    cardBg: "#ffffff",
-    cardBgStack: "#eeeef2",
-    cardBorderStack: "#d8d8e0",
-    cardTextStack: "#b0b0c0",
-    inputBg: "#f0f0f4",
-    accent: "#7c3aed",
-    accentLight: "rgba(124, 58, 237, 0.06)",
-    accentBorder: "rgba(124, 58, 237, 0.15)",
-    overlay: "rgba(0, 0, 0, 0.4)",
-    divider: "#e0e0e6",
-    highlightText: "#7c3aed",
+    bg: "#DCD4C2",
+    surface: "#E7E0CF",
+    surfaceAlt: "#CDC4B0",
+    border: "rgba(124, 111, 227, 0.3)",
+    borderLight: "rgba(51, 46, 34, 0.12)",
+    text: "#332E22",
+    textSub: "#5b5443",
+    textMuted: "#736B57",
+    textFaint: "#9a937f",
+    cardBg: "#E7E0CF",
+    cardBgStack: "#CDC4B0",
+    cardBorderStack: "rgba(51, 46, 34, 0.15)",
+    cardTextStack: "#9a937f",
+    inputBg: "#E7E0CF",
+    accent: "#7C6FE3",
+    accentLight: "rgba(124, 111, 227, 0.13)",
+    accentBorder: "rgba(124, 111, 227, 0.3)",
+    accentText: "#FFFFFF",
+    overlay: "rgba(51, 46, 34, 0.4)",
+    divider: "rgba(51, 46, 34, 0.12)",
+    highlightText: "#7C6FE3",
+    success: "#8FAA82",
+    successSoft: "rgba(143, 170, 130, 0.18)",
+    successBorder: "rgba(143, 170, 130, 0.45)",
+    warning: "#D1A55E",
+    warningSoft: "rgba(209, 165, 94, 0.18)",
+    warningBorder: "rgba(209, 165, 94, 0.45)",
+    danger: "#D08486",
+    dangerSoft: "rgba(208, 132, 134, 0.18)",
+    dangerBorder: "rgba(208, 132, 134, 0.45)",
   },
 };
 
@@ -1303,7 +1323,7 @@ export default function RapidCycleApp() {
     const pct = studiedCount === 0 ? null : Math.round((scoreSum / studiedCount) * 100);
     const SEG = 20;
     const order = [l3, l2, l1, l0];
-    const colors = ["#4ade80", "#facc15", "#f87171", t.textFaint];
+    const colors = [t.success, t.warning, t.danger, t.textFaint];
     const raw = order.map(c => (c / total) * SEG);
     const counts = raw.map(r => Math.floor(r));
     let used = counts.reduce((a, b) => a + b, 0);
@@ -1641,8 +1661,8 @@ export default function RapidCycleApp() {
             <div style={s.brand}>
               <div style={s.logoIcon}>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                  <rect x="2" y="4" width="14" height="18" rx="2" stroke="#f0abfc" strokeWidth="1.5" fill="none"/>
-                  <rect x="8" y="2" width="14" height="18" rx="2" stroke="#c084fc" strokeWidth="1.5" fill="rgba(192,132,252,0.08)"/>
+                  <rect x="2" y="4" width="14" height="18" rx="2" stroke={t.highlightText} strokeWidth="1.5" fill="none"/>
+                  <rect x="8" y="2" width="14" height="18" rx="2" stroke={t.accent} strokeWidth="1.5" fill={t.accentLight}/>
                 </svg>
               </div>
               <div>
@@ -1672,7 +1692,7 @@ export default function RapidCycleApp() {
           {/* Review button */}
           {dueCount > 0 && (
             <button
-              style={{ ...s.crossStudyBtn, border: "1px solid rgba(168, 85, 247, 0.35)" }}
+              style={{ ...s.crossStudyBtn, border: `1px solid ${t.accentBorder}` }}
               onClick={() => setView("review")}
             >
               <span style={{ fontSize: "16px" }}>🔁</span>
@@ -1779,7 +1799,7 @@ export default function RapidCycleApp() {
             )}
             <button style={{ ...s.fab, transform: showAddMenu ? "rotate(45deg)" : "none" }} onClick={() => setShowAddMenu(v => !v)}>
               <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-                <path d="M11 4v14M4 11h14" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" />
+                <path d="M11 4v14M4 11h14" stroke={t.accentText} strokeWidth="2.2" strokeLinecap="round" />
               </svg>
             </button>
           </div>
@@ -2058,9 +2078,9 @@ export default function RapidCycleApp() {
       const score = getMemoryScore(w);
       const st = stats[key];
       if (!st || st.seen === 0) return { level: 0, label: "未学習", color: t.textMuted, score: 0 };
-      if (score >= 0.85) return { level: 3, label: "定着", color: "#4ade80", score };
-      if (score >= 0.55) return { level: 2, label: "あと少し", color: "#facc15", score };
-      return { level: 1, label: "要復習", color: "#f87171", score };
+      if (score >= 0.85) return { level: 3, label: "定着", color: t.success, score };
+      if (score >= 0.55) return { level: 2, label: "あと少し", color: t.warning, score };
+      return { level: 1, label: "要復習", color: t.danger, score };
     };
 
     const masteredCount = words.filter(w => getMemoryLevel(w).level === 3).length;
@@ -2111,7 +2131,7 @@ export default function RapidCycleApp() {
               <span style={s.detailStatLabel}>全単語</span>
             </div>
             <div style={s.detailStat}>
-              <span style={{ ...s.detailStatValue, color: masteredCount > 0 ? "#4ade80" : t.text }}>{masteredCount}</span>
+              <span style={{ ...s.detailStatValue, color: masteredCount > 0 ? t.success : t.text }}>{masteredCount}</span>
               <span style={s.detailStatLabel}>定着済み</span>
             </div>
             <div style={s.detailStat}>
@@ -2139,9 +2159,9 @@ export default function RapidCycleApp() {
                 return `${n}語で学習する`;
               })()}
             </button>
-            <button style={{ ...s.exportBtn, borderColor: exportCopied ? "rgba(74, 222, 128, 0.3)" : t.borderLight }} onClick={exportDeck}>
+            <button style={{ ...s.exportBtn, borderColor: exportCopied ? t.successBorder : t.borderLight }} onClick={exportDeck}>
               {exportCopied ? (
-                <span style={{ fontSize: "11px", color: "#4ade80", fontWeight: "600" }}>✓</span>
+                <span style={{ fontSize: "11px", color: t.success, fontWeight: "600" }}>✓</span>
               ) : (
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={t.textSub} strokeWidth="2" strokeLinecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
               )}
@@ -2414,9 +2434,9 @@ export default function RapidCycleApp() {
       const score = computeMemoryScore(stats, w);
       const st = stats[key];
       if (!st || st.seen === 0) return { level: 0, label: "未学習", color: t.textMuted, score: 0 };
-      if (score >= 0.85) return { level: 3, label: "定着", color: "#4ade80", score };
-      if (score >= 0.55) return { level: 2, label: "あと少し", color: "#facc15", score };
-      return { level: 1, label: "要復習", color: "#f87171", score };
+      if (score >= 0.85) return { level: 3, label: "定着", color: t.success, score };
+      if (score >= 0.55) return { level: 2, label: "あと少し", color: t.warning, score };
+      return { level: 1, label: "要復習", color: t.danger, score };
     };
 
     const memFiltered = reviewFilter === "all"
@@ -2667,9 +2687,9 @@ export default function RapidCycleApp() {
                   ...s.primaryBtn,
                   flex: 1,
                   padding: "12px",
-                  background: (settings.theme || "dark") === "dark" ? "linear-gradient(135deg, #a855f7, #7c3aed)" : "transparent",
+                  background: (settings.theme || "dark") === "dark" ? t.accent : "transparent",
                   border: (settings.theme || "dark") === "dark" ? "none" : `1px solid ${t.border}`,
-                  color: (settings.theme || "dark") === "dark" ? "#fff" : t.textMuted,
+                  color: (settings.theme || "dark") === "dark" ? t.accentText : t.textMuted,
                 }}
               >
                 🌙 ダーク
@@ -2680,9 +2700,9 @@ export default function RapidCycleApp() {
                   ...s.primaryBtn,
                   flex: 1,
                   padding: "12px",
-                  background: settings.theme === "light" ? "linear-gradient(135deg, #a855f7, #7c3aed)" : "transparent",
+                  background: settings.theme === "light" ? t.accent : "transparent",
                   border: settings.theme === "light" ? "none" : `1px solid ${t.border}`,
-                  color: settings.theme === "light" ? "#fff" : t.textMuted,
+                  color: settings.theme === "light" ? t.accentText : t.textMuted,
                 }}
               >
                 ☀️ ライト
@@ -2736,9 +2756,9 @@ export default function RapidCycleApp() {
                   onClick={() => setSettings(prev => ({ ...prev, memoryReappear: !prev.memoryReappear }))}
                   style={{
                     ...s.toggleBtn,
-                    background: settings.memoryReappear ? "rgba(74, 222, 128, 0.15)" : "rgba(107, 104, 119, 0.1)",
-                    color: settings.memoryReappear ? "#4ade80" : t.textMuted,
-                    borderColor: settings.memoryReappear ? "rgba(74, 222, 128, 0.3)" : t.divider,
+                    background: settings.memoryReappear ? t.successSoft : t.surfaceAlt,
+                    color: settings.memoryReappear ? t.success : t.textMuted,
+                    borderColor: settings.memoryReappear ? t.successBorder : t.divider,
                   }}
                 >
                   {settings.memoryReappear ? "ON" : "OFF"}
@@ -2815,7 +2835,7 @@ export default function RapidCycleApp() {
                 </button>
               </div>
               {cloudStatus === "error" && (
-                <p style={{ fontSize: "12px", color: "#f87171", margin: "8px 0 0" }}>通信に失敗しました。URL を確認してください。</p>
+                <p style={{ fontSize: "12px", color: t.danger, margin: "8px 0 0" }}>通信に失敗しました。URL を確認してください。</p>
               )}
             </div>
           </div>
@@ -2863,7 +2883,7 @@ export default function RapidCycleApp() {
                 </button>
               </div>
               {backupStatus === "error" && (
-                <p style={{ fontSize: "12px", color: "#f87171", margin: "8px 0 0" }}>データの読み取りに失敗しました。コピーした内容を確認してください。</p>
+                <p style={{ fontSize: "12px", color: t.danger, margin: "8px 0 0" }}>データの読み取りに失敗しました。コピーした内容を確認してください。</p>
               )}
             </div>
           </div>
@@ -2989,7 +3009,7 @@ export default function RapidCycleApp() {
                 margin: "0 0 10px",
                 border: `1px solid ${t.borderLight}`,
               }}>
-                <p style={{ fontSize: "11px", fontWeight: "600", color: "#a855f7", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "1px" }}>
+                <p style={{ fontSize: "11px", fontWeight: "600", color: t.accent, margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "1px" }}>
                   復元されるデータ
                 </p>
                 <div style={{ fontSize: "13px", color: t.text, lineHeight: "1.8" }}>
@@ -2998,13 +3018,13 @@ export default function RapidCycleApp() {
                 </div>
               </div>
               <div style={{
-                background: "rgba(239, 68, 68, 0.04)",
+                background: t.dangerSoft,
                 borderRadius: "10px",
                 padding: "12px 14px",
                 margin: "0 0 16px",
-                border: "1px solid rgba(239, 68, 68, 0.12)",
+                border: `1px solid ${t.dangerBorder}`,
               }}>
-                <p style={{ fontSize: "11px", fontWeight: "600", color: "#f87171", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "1px" }}>
+                <p style={{ fontSize: "11px", fontWeight: "600", color: t.danger, margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "1px" }}>
                   失われるローカルデータ
                 </p>
                 <div style={{ fontSize: "13px", color: t.text, lineHeight: "1.8" }}>
@@ -3042,7 +3062,7 @@ export default function RapidCycleApp() {
                   <div style={{
                     height: "100%",
                     width: `${(restoreProgress.current / restoreProgress.total) * 100}%`,
-                    background: "linear-gradient(90deg, #a855f7, #c084fc)",
+                    background: t.accent,
                     borderRadius: "3px",
                     transition: "width 0.3s ease",
                   }} />
@@ -3079,13 +3099,13 @@ export default function RapidCycleApp() {
                 width: "56px",
                 height: "56px",
                 borderRadius: "50%",
-                background: "rgba(74, 222, 128, 0.1)",
-                border: "1.5px solid rgba(74, 222, 128, 0.3)",
+                background: t.successSoft,
+                border: `1.5px solid ${t.successBorder}`,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 fontSize: "24px",
-                color: "#4ade80",
+                color: t.success,
                 margin: "0 auto 14px",
               }}>
                 ✓
@@ -3240,7 +3260,7 @@ export default function RapidCycleApp() {
       return (
         <div style={s.card}>
           <div style={s.exampleArea}>
-            <p style={{ ...s.exampleSentence, fontSize: "16px", color: "#7a7688" }}>
+            <p style={{ ...s.exampleSentence, fontSize: "16px", color: t.textMuted }}>
               {Array.isArray(parts) ? parts.map((part, i) => {
                 const isHl = part.toLowerCase().startsWith(card.word.toLowerCase());
                 return isHl ? <span key={i} style={{ ...s.highlight, fontSize: "16px" }}>{part}</span> : <span key={i}>{part}</span>;
@@ -3516,7 +3536,7 @@ function makeStyles(t) { return {
     height: "40px",
     border: "none",
     borderRadius: "10px",
-    background: "rgba(107, 104, 119, 0.08)",
+    background: t.surfaceAlt,
     cursor: "pointer",
     display: "flex",
     alignItems: "center",
@@ -3533,8 +3553,8 @@ function makeStyles(t) { return {
     width: "44px",
     height: "44px",
     borderRadius: "12px",
-    background: "rgba(192, 132, 252, 0.06)",
-    border: "1px solid rgba(192, 132, 252, 0.12)",
+    background: t.accentLight,
+    border: `1px solid ${t.accentBorder}`,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -3543,7 +3563,7 @@ function makeStyles(t) { return {
     fontSize: "20px",
     fontWeight: "700",
     margin: 0,
-    color: "#f0ecf9",
+    color: t.text,
     letterSpacing: "-0.3px",
   },
   brandSub: {
@@ -3568,7 +3588,7 @@ function makeStyles(t) { return {
     display: "flex",
     alignItems: "center",
     background: t.inputBg,
-    border: "1px solid #1e1e28",
+    border: `1px solid ${t.borderLight}`,
     borderRadius: "14px",
     marginBottom: "8px",
     overflow: "hidden",
@@ -3602,8 +3622,8 @@ function makeStyles(t) { return {
     height: "36px",
     border: "none",
     borderRadius: "10px",
-    background: "rgba(192, 132, 252, 0.08)",
-    color: "#c084fc",
+    background: t.accentLight,
+    color: t.highlightText,
     fontSize: "14px",
     cursor: "pointer",
     display: "flex",
@@ -3645,7 +3665,7 @@ function makeStyles(t) { return {
   },
   emptyHint: {
     fontSize: "13px",
-    color: "#5a5668",
+    color: t.textMuted,
     margin: 0,
   },
   crossStudyBtn: {
@@ -3654,8 +3674,8 @@ function makeStyles(t) { return {
     alignItems: "center",
     gap: "12px",
     padding: "14px 18px",
-    background: "rgba(168, 85, 247, 0.06)",
-    border: "1px solid rgba(168, 85, 247, 0.15)",
+    background: t.accentLight,
+    border: `1px solid ${t.accentBorder}`,
     borderRadius: "14px",
     cursor: "pointer",
     marginBottom: "16px",
@@ -3667,7 +3687,7 @@ function makeStyles(t) { return {
     width: "100%",
     padding: "10px 14px",
     background: t.inputBg,
-    border: "1px solid #26263a",
+    border: `1px solid ${t.borderLight}`,
     borderRadius: "10px",
     color: t.text,
     fontSize: "13px",
@@ -3696,14 +3716,14 @@ function makeStyles(t) { return {
     width: "52px",
     height: "52px",
     borderRadius: "50%",
-    background: "linear-gradient(135deg, #a855f7, #7c3aed)",
+    background: t.accent,
     border: "none",
-    color: "#fff",
+    color: t.accentText,
     fontSize: "28px",
     fontWeight: "300",
     lineHeight: "1",
     cursor: "pointer",
-    boxShadow: "0 4px 16px rgba(124, 58, 237, 0.5)",
+    boxShadow: `0 4px 16px ${t.accentBorder}`,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -3748,7 +3768,7 @@ function makeStyles(t) { return {
   modalOverlay: {
     position: "fixed",
     inset: 0,
-    background: "rgba(0, 0, 0, 0.6)",
+    background: t.overlay,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -3765,10 +3785,10 @@ function makeStyles(t) { return {
   },
   primaryBtn: {
     padding: "16px",
-    background: "linear-gradient(135deg, #a855f7, #7c3aed)",
+    background: t.accent,
     border: "none",
     borderRadius: "14px",
-    color: "#fff",
+    color: t.accentText,
     fontSize: "15px",
     fontWeight: "600",
     cursor: "pointer",
@@ -3779,7 +3799,7 @@ function makeStyles(t) { return {
   ghostBtn: {
     padding: "14px",
     background: "transparent",
-    border: "1px solid #2a2835",
+    border: `1px solid ${t.divider}`,
     borderRadius: "14px",
     color: t.textSub,
     fontSize: "14px",
@@ -3801,7 +3821,7 @@ function makeStyles(t) { return {
     flex: 1,
     padding: "8px 12px",
     background: t.inputBg,
-    border: "1px solid rgba(168, 85, 247, 0.3)",
+    border: `1px solid ${t.accentBorder}`,
     borderRadius: "8px",
     color: t.text,
     fontSize: "16px",
@@ -3815,8 +3835,8 @@ function makeStyles(t) { return {
     height: "32px",
     border: "none",
     borderRadius: "8px",
-    background: "rgba(74, 222, 128, 0.1)",
-    color: "#4ade80",
+    background: t.successSoft,
+    color: t.success,
     fontSize: "16px",
     cursor: "pointer",
     display: "flex",
@@ -3828,7 +3848,7 @@ function makeStyles(t) { return {
     height: "32px",
     border: "none",
     borderRadius: "8px",
-    background: "rgba(148, 144, 160, 0.08)",
+    background: t.surfaceAlt,
     color: t.textMuted,
     fontSize: "14px",
     cursor: "pointer",
@@ -3847,7 +3867,7 @@ function makeStyles(t) { return {
     alignItems: "center",
     justifyContent: "center",
     background: t.inputBg,
-    border: "1px solid #1e1e28",
+    border: `1px solid ${t.borderLight}`,
     borderRadius: "14px",
     cursor: "pointer",
     WebkitTapHighlightColor: "transparent",
@@ -3865,8 +3885,8 @@ function makeStyles(t) { return {
     padding: "6px 14px",
     border: "none",
     borderRadius: "20px",
-    background: "rgba(168, 85, 247, 0.15)",
-    color: "#c084fc",
+    background: t.accentLight,
+    color: t.highlightText,
     fontSize: "12px",
     fontWeight: "600",
     cursor: "pointer",
@@ -3876,7 +3896,7 @@ function makeStyles(t) { return {
   },
   filterInactive: {
     padding: "6px 14px",
-    border: "1px solid #1e1e28",
+    border: `1px solid ${t.borderLight}`,
     borderRadius: "20px",
     background: "transparent",
     color: t.textMuted,
@@ -3901,7 +3921,7 @@ function makeStyles(t) { return {
     padding: "16px 8px",
     background: t.inputBg,
     borderRadius: "12px",
-    border: "1px solid #1e1e28",
+    border: `1px solid ${t.borderLight}`,
   },
   detailStatValue: {
     fontSize: "20px",
@@ -3984,7 +4004,7 @@ function makeStyles(t) { return {
   },
   editCard: {
     background: t.inputBg,
-    border: "1px solid rgba(168, 85, 247, 0.25)",
+    border: `1px solid ${t.accentBorder}`,
     borderRadius: "12px",
     padding: "16px",
     display: "flex",
@@ -3998,8 +4018,8 @@ function makeStyles(t) { return {
   },
   editInput: {
     padding: "10px 12px",
-    background: "#0c0c0e",
-    border: "1px solid #2a2835",
+    background: t.bg,
+    border: `1px solid ${t.divider}`,
     borderRadius: "8px",
     color: t.text,
     fontSize: "14px",
@@ -4016,10 +4036,10 @@ function makeStyles(t) { return {
   editSaveBtn: {
     flex: 1,
     padding: "10px",
-    background: "linear-gradient(135deg, #a855f7, #7c3aed)",
+    background: t.accent,
     border: "none",
     borderRadius: "8px",
-    color: "#fff",
+    color: t.accentText,
     fontSize: "13px",
     fontWeight: "600",
     cursor: "pointer",
@@ -4030,7 +4050,7 @@ function makeStyles(t) { return {
     flex: 1,
     padding: "10px",
     background: "transparent",
-    border: "1px solid #2a2835",
+    border: `1px solid ${t.divider}`,
     borderRadius: "8px",
     color: t.textSub,
     fontSize: "13px",
@@ -4041,10 +4061,10 @@ function makeStyles(t) { return {
   },
   editDeleteBtn: {
     padding: "10px 14px",
-    background: "rgba(239, 68, 68, 0.06)",
-    border: "1px solid rgba(239, 68, 68, 0.15)",
+    background: t.dangerSoft,
+    border: `1px solid ${t.dangerBorder}`,
     borderRadius: "8px",
-    color: "#f87171",
+    color: t.danger,
     fontSize: "13px",
     fontWeight: "500",
     cursor: "pointer",
@@ -4055,7 +4075,7 @@ function makeStyles(t) { return {
     width: "100%",
     padding: "14px",
     background: "transparent",
-    border: "1px dashed #2a2835",
+    border: `1px dashed ${t.divider}`,
     borderRadius: "10px",
     color: t.textMuted,
     fontSize: "14px",
@@ -4072,7 +4092,7 @@ function makeStyles(t) { return {
   },
   settingItem: {
     background: t.inputBg,
-    border: "1px solid #1e1e28",
+    border: `1px solid ${t.borderLight}`,
     borderRadius: "14px",
     padding: "18px",
     marginBottom: "12px",
@@ -4091,12 +4111,12 @@ function makeStyles(t) { return {
   settingValue: {
     fontSize: "16px",
     fontWeight: "700",
-    color: "#c084fc",
+    color: t.highlightText,
     fontFamily: mono,
   },
   settingDesc: {
     fontSize: "12px",
-    color: "#5a5668",
+    color: t.textMuted,
     margin: "0 0 14px",
     lineHeight: "1.5",
   },
@@ -4108,7 +4128,7 @@ function makeStyles(t) { return {
     background: t.divider,
     borderRadius: "2px",
     outline: "none",
-    accentColor: "#a855f7",
+    accentColor: t.accent,
     cursor: "pointer",
   },
   sliderLabels: {
@@ -4121,10 +4141,10 @@ function makeStyles(t) { return {
   dangerBtn: {
     width: "100%",
     padding: "14px",
-    background: "rgba(239, 68, 68, 0.06)",
-    border: "1px solid rgba(239, 68, 68, 0.15)",
+    background: t.dangerSoft,
+    border: `1px solid ${t.dangerBorder}`,
     borderRadius: "14px",
-    color: "#f87171",
+    color: t.danger,
     fontSize: "14px",
     fontWeight: "500",
     cursor: "pointer",
@@ -4197,7 +4217,7 @@ function makeStyles(t) { return {
   input: {
     padding: "14px 16px",
     background: t.inputBg,
-    border: "1px solid #1e1e28",
+    border: `1px solid ${t.borderLight}`,
     borderRadius: "12px",
     color: t.text,
     fontSize: "15px",
@@ -4208,7 +4228,7 @@ function makeStyles(t) { return {
   fileBtn: {
     padding: "12px 16px",
     background: t.inputBg,
-    border: "1px dashed #2a2835",
+    border: `1px dashed ${t.divider}`,
     borderRadius: "12px",
     color: t.textSub,
     fontSize: "14px",
@@ -4220,7 +4240,7 @@ function makeStyles(t) { return {
   textarea: {
     padding: "14px 16px",
     background: t.inputBg,
-    border: "1px solid #1e1e28",
+    border: `1px solid ${t.borderLight}`,
     borderRadius: "12px",
     color: t.text,
     fontSize: "13px",
@@ -4235,7 +4255,7 @@ function makeStyles(t) { return {
   },
   previewBox: {
     background: t.inputBg,
-    border: "1px solid #1e1e28",
+    border: `1px solid ${t.borderLight}`,
     borderRadius: "12px",
     padding: "14px 16px",
     marginBottom: "16px",
@@ -4243,7 +4263,7 @@ function makeStyles(t) { return {
   previewLabel: {
     fontSize: "12px",
     fontWeight: "600",
-    color: "#a855f7",
+    color: t.accent,
     margin: "0 0 10px",
   },
   previewScroll: {
@@ -4279,11 +4299,11 @@ function makeStyles(t) { return {
     alignItems: "flex-start",
     gap: "8px",
     padding: "12px 14px",
-    background: "rgba(168, 85, 247, 0.04)",
-    border: "1px solid rgba(168, 85, 247, 0.08)",
+    background: t.accentLight,
+    border: `1px solid ${t.accentBorder}`,
     borderRadius: "10px",
     fontSize: "12px",
-    color: "#7a7688",
+    color: t.textMuted,
     lineHeight: "1.6",
     marginBottom: "20px",
   },
@@ -4317,10 +4337,10 @@ function makeStyles(t) { return {
   roundLabel: {
     fontSize: "12px",
     fontWeight: "700",
-    color: "#c084fc",
+    color: t.highlightText,
     fontFamily: mono,
     padding: "3px 8px",
-    background: "rgba(192, 132, 252, 0.08)",
+    background: t.accentLight,
     borderRadius: "6px",
   },
   cardCount: {
@@ -4332,14 +4352,14 @@ function makeStyles(t) { return {
   progressTrack: {
     width: "100%",
     height: "2px",
-    background: "#22222e",
+    background: t.surface,
     borderRadius: "1px",
     marginBottom: "20px",
     overflow: "hidden",
   },
   progressFill: {
     height: "100%",
-    background: "linear-gradient(90deg, #a855f7, #c084fc)",
+    background: t.accent,
     borderRadius: "1px",
     transition: "width 0.3s ease",
   },
@@ -4359,11 +4379,11 @@ function makeStyles(t) { return {
   },
   swipeRight: {
     right: "12px",
-    color: "#4ade80",
+    color: t.success,
   },
   swipeLeft: {
     left: "12px",
-    color: "#f87171",
+    color: t.danger,
   },
   swipeIcon: {
     fontSize: "40px",
@@ -4394,8 +4414,8 @@ function makeStyles(t) { return {
     transition: "transform 0.3s ease-out, opacity 0.3s ease-out",
   },
   stackBgCard: {
-    background: "#131319",
-    border: "1px solid #1a1a24",
+    background: t.surfaceAlt,
+    border: `1px solid ${t.borderLight}`,
   },
   flipContainer: {
     width: "100%",
@@ -4423,7 +4443,7 @@ function makeStyles(t) { return {
     width: "100%",
     height: "440px",
     background: t.surface,
-    border: "1px solid #2e2e40",
+    border: `1px solid ${t.border}`,
     borderRadius: "20px",
     padding: "40px 28px",
     display: "flex",
@@ -4439,19 +4459,19 @@ function makeStyles(t) { return {
     fontSize: "20px",
     fontWeight: "500",
     lineHeight: "1.7",
-    color: "#c8c5be",
+    color: t.text,
     margin: 0,
   },
   highlight: {
     color: t.highlightText,
     fontWeight: "700",
-    borderBottom: "2px solid rgba(168, 85, 247, 0.3)",
+    borderBottom: `2px solid ${t.accentBorder}`,
     paddingBottom: "1px",
   },
   cardDivider: {
     width: "100%",
     height: "1px",
-    background: "linear-gradient(90deg, transparent, #2a2835, transparent)",
+    background: `linear-gradient(90deg, transparent, ${t.divider}, transparent)`,
   },
   answerArea: {
     display: "flex",
@@ -4466,14 +4486,14 @@ function makeStyles(t) { return {
   answerWord: {
     fontSize: "14px",
     fontWeight: "700",
-    color: "#c084fc",
+    color: t.highlightText,
     fontFamily: mono,
     letterSpacing: "0.5px",
   },
   answerMeaningText: {
     fontSize: "22px",
     fontWeight: "700",
-    color: "#f0ecf9",
+    color: t.text,
     lineHeight: "1.4",
   },
   answerTranslation: {
@@ -4482,16 +4502,16 @@ function makeStyles(t) { return {
     lineHeight: "1.8",
     margin: 0,
     padding: "2px 0 2px 14px",
-    borderLeft: "2px solid #2a2835",
+    borderLeft: `2px solid ${t.divider}`,
   },
   answerNote: {
     fontSize: "12px",
-    color: "#7a7688",
+    color: t.textMuted,
     lineHeight: "1.7",
     margin: 0,
     padding: "10px 14px",
-    background: "rgba(168, 85, 247, 0.04)",
-    border: "1px solid rgba(168, 85, 247, 0.08)",
+    background: t.accentLight,
+    border: `1px solid ${t.accentBorder}`,
     borderRadius: "8px",
   },
   tapHint: {
@@ -4519,9 +4539,9 @@ function makeStyles(t) { return {
     fontSize: "12px",
     color: t.textMuted,
     padding: "8px",
-    background: "rgba(248, 113, 113, 0.04)",
+    background: t.dangerSoft,
     borderRadius: "8px",
-    border: "1px solid rgba(248, 113, 113, 0.08)",
+    border: `1px solid ${t.dangerBorder}`,
   },
 
   // ── Result ──
@@ -4537,13 +4557,13 @@ function makeStyles(t) { return {
     width: "72px",
     height: "72px",
     borderRadius: "50%",
-    background: "rgba(74, 222, 128, 0.06)",
-    border: "1.5px solid rgba(74, 222, 128, 0.2)",
+    background: t.successSoft,
+    border: `1.5px solid ${t.successBorder}`,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     fontSize: "32px",
-    color: "#4ade80",
+    color: t.success,
   },
   resultTitle: {
     fontSize: "22px",
@@ -4566,7 +4586,7 @@ function makeStyles(t) { return {
     padding: "18px 12px",
     background: t.inputBg,
     borderRadius: "14px",
-    border: "1px solid #1e1e28",
+    border: `1px solid ${t.borderLight}`,
   },
   statValue: {
     fontSize: "24px",
@@ -4593,7 +4613,7 @@ function makeStyles(t) { return {
   modalOverlay: {
     position: "fixed",
     inset: 0,
-    background: "rgba(0, 0, 0, 0.7)",
+    background: t.overlay,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -4606,7 +4626,7 @@ function makeStyles(t) { return {
     width: "100%",
     maxWidth: "320px",
     background: t.surface,
-    border: "1px solid #2e2e40",
+    border: `1px solid ${t.border}`,
     borderRadius: "18px",
     padding: "28px 24px 20px",
     display: "flex",
@@ -4634,10 +4654,10 @@ function makeStyles(t) { return {
   modalCancelBtn: {
     flex: 1,
     padding: "13px",
-    background: "linear-gradient(135deg, #a855f7, #7c3aed)",
+    background: t.accent,
     border: "none",
     borderRadius: "12px",
-    color: "#fff",
+    color: t.accentText,
     fontSize: "14px",
     fontWeight: "600",
     cursor: "pointer",
@@ -4647,10 +4667,10 @@ function makeStyles(t) { return {
   modalConfirmBtn: {
     flex: 1,
     padding: "13px",
-    background: "rgba(239, 68, 68, 0.08)",
-    border: "1px solid rgba(239, 68, 68, 0.2)",
+    background: t.dangerSoft,
+    border: `1px solid ${t.dangerBorder}`,
     borderRadius: "12px",
-    color: "#f87171",
+    color: t.danger,
     fontSize: "14px",
     fontWeight: "600",
     cursor: "pointer",
