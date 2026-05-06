@@ -509,6 +509,9 @@ export default function RapidCycleApp() {
   const sessionIdRef = useRef("");
   const swipeLockRef = useRef(false);
   const touchCardRef = useRef(null);
+  const lastActionRef = useRef(null);
+  const [canRewind, setCanRewind] = useState(false);
+  const [rewindAnim, setRewindAnim] = useState(null);
 
   // デバウンス発火時に最新 decks を参照するための Ref
   const decksRef = useRef(decks);
@@ -1139,6 +1142,13 @@ export default function RapidCycleApp() {
     syncTouchedDecks();
   }, [view, settings.gasUrl, touchedDeckIds]);
 
+  useEffect(() => {
+    if (view !== "study") {
+      lastActionRef.current = null;
+      setCanRewind(false);
+    }
+  }, [view]);
+
   // 指定デッキの同期を3秒後にスケジュール。連続呼び出しはタイマーリセット
   const scheduleDeckSync = useCallback((deck) => {
     if (!settings.gasUrl) return;
@@ -1383,6 +1393,8 @@ export default function RapidCycleApp() {
     setAnimatingCards([]);
     setSessionTotal(0);
     setTouchedDeckIds(new Set());
+    lastActionRef.current = null;
+    setCanRewind(false);
     sessionIdRef.current = genId();
     setView("study");
   };
@@ -1426,6 +1438,8 @@ export default function RapidCycleApp() {
     setAnimatingCards([]);
     setSessionTotal(0);
     setTouchedDeckIds(new Set());
+    lastActionRef.current = null;
+    setCanRewind(false);
     sessionIdRef.current = genId();
     setView("study");
   };
@@ -1464,6 +1478,20 @@ export default function RapidCycleApp() {
   const dismissCard = (direction, correct, card, swipeEndX, swipeEndY) => {
     swipeLockRef.current = true;
     scheduleTimeout(() => { swipeLockRef.current = false; }, 120);
+
+    // Snapshot for rewind (before recordResult mutates stats)
+    const key = statsKey(card);
+    lastActionRef.current = {
+      prevStatsEntry: stats[key] ? JSON.parse(JSON.stringify(stats[key])) : null,
+      statsKey: key,
+      card,
+      prevCurrentIdx: currentIdx,
+      wasInRoundUnknown: roundUnknown.includes(card),
+      prevSessionTotal: sessionTotal,
+      swipeDirection: direction,
+      round,
+    };
+    setCanRewind(true);
 
     const wasFlipped = flipped;
     const id = ++animIdRef.current;
@@ -1518,12 +1546,16 @@ export default function RapidCycleApp() {
 
       if (nextCards.length <= 2) {
         setView("result");
+        lastActionRef.current = null;
+        setCanRewind(false);
       } else {
         setPrevRoundKnown(allKnown);
         setCards(shuffle(nextCards));
         setCurrentIdx(0);
         setRoundUnknown([]);
         setRound(r => r + 1);
+        lastActionRef.current = null;
+        setCanRewind(false);
       }
     }
   };
@@ -1536,6 +1568,44 @@ export default function RapidCycleApp() {
       setFlipped(true);
       setFlipDirection("right");
     }
+  };
+
+  const handleRewind = () => {
+    const snap = lastActionRef.current;
+    if (!snap) return;
+    if (snap.round !== round) {
+      lastActionRef.current = null;
+      setCanRewind(false);
+      return;
+    }
+
+    setStats(prev => {
+      const next = { ...prev };
+      if (snap.prevStatsEntry === null) {
+        delete next[snap.statsKey];
+      } else {
+        next[snap.statsKey] = snap.prevStatsEntry;
+      }
+      return next;
+    });
+
+    if (!snap.wasInRoundUnknown) {
+      setRoundUnknown(prev => prev.filter(c => c !== snap.card));
+    }
+
+    setSessionTotal(snap.prevSessionTotal);
+    setCurrentIdx(snap.prevCurrentIdx);
+    setFlipped(false);
+    setFlipDirection("right");
+    setWaitingForTap(false);
+    setPendingResult(null);
+    setSwipeX(0);
+    setAnimatingCards([]);
+
+    setRewindAnim({ fromDirection: snap.swipeDirection });
+
+    lastActionRef.current = null;
+    setCanRewind(false);
   };
 
   // ─── TOUCH HANDLERS ───
@@ -3316,6 +3386,14 @@ export default function RapidCycleApp() {
               60% { transform: scale(1.0) translateY(2px); opacity: 1; filter: brightness(0.98); }
               100% { transform: scale(1.0) translateY(0px); opacity: 1; filter: brightness(1); }
             }
+            @keyframes cardRewindFromRight {
+              0% { transform: translateX(500px) rotate(15deg); opacity: 0; }
+              100% { transform: translateX(0px) rotate(0deg); opacity: 1; }
+            }
+            @keyframes cardRewindFromLeft {
+              0% { transform: translateX(-500px) rotate(-15deg); opacity: 0; }
+              100% { transform: translateX(0px) rotate(0deg); opacity: 1; }
+            }
           `}</style>
 
           {/* Card stack */}
@@ -3368,13 +3446,17 @@ export default function RapidCycleApp() {
               })}
 
               {/* Current top card with entrance animation */}
-              <div key={`top-${currentIdx}-${round}`} style={{
+              <div key={`top-${currentIdx}-${round}${rewindAnim ? '-rw' : ''}`} style={{
                 ...s.stackCard,
                 zIndex: 20,
                 transform: `translateX(${swipeX}px) translateY(${swipeY}px) rotate(${swipeRotate}deg)`,
                 transition: swipeX !== 0 ? "none" : "transform 0.12s ease-out",
-                animation: swipeX === 0 && !flipped ? "cardPromote 0.4s cubic-bezier(0.22, 1, 0.36, 1)" : "none",
-              }}>
+                animation: rewindAnim
+                  ? `${rewindAnim.fromDirection === "right" ? "cardRewindFromRight" : "cardRewindFromLeft"} 0.5s cubic-bezier(0.22, 1, 0.36, 1)`
+                  : (swipeX === 0 && !flipped ? "cardPromote 0.4s cubic-bezier(0.22, 1, 0.36, 1)" : "none"),
+              }}
+              onAnimationEnd={() => { if (rewindAnim) setRewindAnim(null); }}
+              >
                 <div style={s.flipContainer}>
                   <div style={{
                     ...s.flipInner,
@@ -3401,6 +3483,22 @@ export default function RapidCycleApp() {
           <div style={s.swipeInstruction}>
             <span style={s.swipeInstructLeft}>← わからない</span>
             <span style={s.swipeInstructRight}>わかる →</span>
+          </div>
+
+          {/* Rewind button */}
+          <div style={s.rewindBar}>
+            <button
+              style={{
+                ...s.rewindBtn,
+                opacity: canRewind && !waitingForTap ? 1 : 0.35,
+                cursor: canRewind && !waitingForTap ? "pointer" : "not-allowed",
+              }}
+              onClick={handleRewind}
+              disabled={!canRewind || waitingForTap}
+              aria-label="直前の判定を取り消す"
+            >
+              ↶ もどす
+            </button>
           </div>
 
           {/* Quit confirmation modal */}
@@ -4542,6 +4640,21 @@ function makeStyles(t) { return {
     background: t.dangerSoft,
     borderRadius: "8px",
     border: `1px solid ${t.dangerBorder}`,
+  },
+  rewindBar: {
+    display: "flex",
+    justifyContent: "center",
+    padding: "4px 0 0",
+  },
+  rewindBtn: {
+    background: "none",
+    border: "none",
+    color: t.textMuted,
+    fontSize: "13px",
+    padding: "6px 16px",
+    borderRadius: "8px",
+    transition: "opacity 0.2s",
+    WebkitTapHighlightColor: "transparent",
   },
 
   // ── Result ──
