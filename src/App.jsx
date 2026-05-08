@@ -364,7 +364,7 @@ function parseCSV(text) {
       parts.push(current.trim());
     }
     if (parts.length >= 5) {
-      return { id: genId(), word: parts[0], meaning: parts[1], example_en: parts[2], example_ja: parts[3], note: parts[4] };
+      return { id: genId(), word: parts[0], meaning: parts[1], example_en: parts[2], example_ja: parts[3], note: parts[4].replace(/\\n/g, "\n") };
     } else if (parts.length >= 4) {
       return { id: genId(), word: parts[0], meaning: parts[1], example_en: parts[2], example_ja: parts[3], note: "" };
     } else if (parts.length >= 2) {
