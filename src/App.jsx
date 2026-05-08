@@ -572,6 +572,8 @@ export default function RapidCycleApp() {
   const [exportCopied, setExportCopied] = useState(false);
   const [crossFilter, setCrossFilter] = useState("all");
   const [crossCount, setCrossCount] = useState(null); // null = 全部
+  const [crossPreviewKey, setCrossPreviewKey] = useState(null);
+  const [crossPreviewFlipped, setCrossPreviewFlipped] = useState(false);
   // Review state
   const [reviewFilter, setReviewFilter] = useState("all");
   const [reviewOverdueFilter, setReviewOverdueFilter] = useState("all");
@@ -603,7 +605,7 @@ export default function RapidCycleApp() {
     } else if (view === "folder") {
       swipeBackRef.current = () => setView("home");
     } else if (view === "crossSetup") {
-      swipeBackRef.current = () => setView(activeFolder ? "folder" : "home");
+      swipeBackRef.current = () => { setView(activeFolder ? "folder" : "home"); setCrossPreviewKey(null); };
     } else if (view === "settings") {
       swipeBackRef.current = () => setView("home");
     } else if (view === "review") {
@@ -1996,8 +1998,19 @@ export default function RapidCycleApp() {
     // Deduplicate
     const seenW = new Set();
     availableWords = availableWords.filter(w => { const k = statsKey(w); if (seenW.has(k)) return false; seenW.add(k); return true; });
-    const filteredCount = crossFilter === "all" ? availableWords.length
-      : availableWords.filter(w => getMemoryLevelForWord(w) === parseInt(crossFilter)).length;
+
+    const getCrossMemLevel = (w) => {
+      const key = statsKey(w);
+      const score = computeMemoryScore(stats, w);
+      const st = stats[key];
+      if (!st || st.seen === 0) return { level: 0, label: "未学習", color: t.textMuted, score: 0 };
+      if (score >= 0.85) return { level: 3, label: "定着", color: t.success, score };
+      if (score >= 0.55) return { level: 2, label: "あと少し", color: t.warning, score };
+      return { level: 1, label: "要復習", color: t.danger, score };
+    };
+
+    const filteredWords = crossFilter === "all" ? availableWords
+      : availableWords.filter(w => getCrossMemLevel(w).level === parseInt(crossFilter));
 
     const filters = [
       { key: "all", label: "全て" },
@@ -2013,62 +2026,179 @@ export default function RapidCycleApp() {
       { label: "50語", value: 50 },
     ];
 
+    const crossPreviewW = crossPreviewKey !== null ? filteredWords.find(w => statsKey(w) === crossPreviewKey) : null;
+
     const crossSetupId = activeFolder ? `crossSetup-${activeFolder.id}` : "crossSetup-home";
     return (
       <motion.div key="crossSetup" style={s.shell} initial={{ opacity: 0, scale: 1.02 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}>
         <div style={s.page}>
           <header style={s.subHeader}>
-            <button style={s.backBtn} onClick={() => setView(activeFolder ? "folder" : "home")}>← 戻る</button>
+            <button style={s.backBtn} onClick={() => { setView(activeFolder ? "folder" : "home"); setCrossPreviewKey(null); }}>← 戻る</button>
             <h2 style={s.subTitle}>横断学習</h2>
           </header>
 
-          <div style={s.scrollWrapper}>
-          <div style={s.scrollArea}>
-          <p style={{ fontSize: "13px", color: t.textMuted, margin: "0 0 20px" }}>
-            {sourceLabel}から{filteredCount}語が対象
+          <p style={{ fontSize: "13px", color: t.textMuted, margin: "0 0 16px" }}>
+            {sourceLabel}から{filteredWords.length}語が対象
           </p>
 
+          {/* Action button */}
+          <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+            <button
+              style={{ ...s.primaryBtn, flex: 1, opacity: filteredWords.length > 0 ? 1 : 0.4 }}
+              disabled={filteredWords.length === 0}
+              onClick={() => startCrossStudy(sourceDecks, crossFilter, crossCount, `${sourceLabel}（横断）`)}
+            >
+              {(() => {
+                const n = crossCount === null || filteredWords.length <= crossCount
+                  ? filteredWords.length
+                  : crossCount;
+                return `${n}語で学習開始`;
+              })()}
+            </button>
+          </div>
+
           {/* Count selector */}
-          <div style={s.formGroup}>
-            <label style={s.label}>出題数</label>
-            <div style={s.filterRow}>
-              {countOptions.map(opt => (
-                <button key={String(opt.value)} onClick={() => setCrossCount(opt.value)}
-                  style={crossCount === opt.value ? s.filterActive : s.filterInactive}>
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-            <p style={{ fontSize: "12px", color: t.textMuted, margin: "4px 0 0" }}>
-              {crossCount === null || filteredCount <= crossCount
-                ? `${filteredCount}語を全て出題`
-                : `${filteredCount}語からランダムに${crossCount}語を出題`}
-            </p>
+          <div style={{ ...s.filterRow, marginBottom: "6px" }}>
+            {countOptions.map(opt => (
+              <button key={String(opt.value)} onClick={() => setCrossCount(opt.value)}
+                style={crossCount === opt.value ? s.filterActive : s.filterInactive}>
+                {opt.label}
+              </button>
+            ))}
           </div>
 
           {/* Memory filter */}
-          <div style={s.formGroup}>
-            <label style={s.label}>記憶度フィルタ</label>
-            <div style={s.filterRow}>
-              {filters.map(f => (
-                <button key={f.key} onClick={() => setCrossFilter(f.key)}
-                  style={crossFilter === f.key ? s.filterActive : s.filterInactive}>
-                  {f.label}
-                </button>
-              ))}
-            </div>
+          <div style={s.filterRow}>
+            {filters.map(f => (
+              <button key={f.key} onClick={() => setCrossFilter(f.key)}
+                style={crossFilter === f.key ? s.filterActive : s.filterInactive}>
+                {f.label}
+              </button>
+            ))}
           </div>
 
-          <button
-            style={{ ...s.primaryBtn, marginTop: "20px", opacity: filteredCount > 0 ? 1 : 0.4 }}
-            disabled={filteredCount === 0}
-            onClick={() => startCrossStudy(sourceDecks, crossFilter, crossCount, `${sourceLabel}（横断）`)}
-          >
-            {crossCount === null ? filteredCount : Math.min(filteredCount, crossCount)}語で学習開始
-          </button>
+          {/* Word list */}
+          <div style={s.scrollWrapper}>
+          <div style={s.scrollArea}>
+          <div style={s.wordList}>
+            {filteredWords.length === 0 && (
+              <p style={{ fontSize: "13px", color: t.textFaint, textAlign: "center", padding: "24px 0" }}>
+                該当する単語がありません
+              </p>
+            )}
+            {filteredWords.map((w) => {
+              const k = statsKey(w);
+              const mem = getCrossMemLevel(w);
+              const st = getWordStats(stats, w);
+              return (
+                <div key={k} style={s.wordItem} onClick={() => { setCrossPreviewKey(k); setCrossPreviewFlipped(false); }}>
+                  <div style={s.wordItemLeft}>
+                    <div style={{ ...s.memoryDot, background: mem.color }} />
+                    <div style={s.wordItemText}>
+                      <span style={s.wordItemWord}>{w.word}</span>
+                      <span style={s.wordItemMeaning}>{w.meaning}</span>
+                    </div>
+                  </div>
+                  <div style={s.wordItemRight}>
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "2px" }}>
+                      <span style={{ ...s.memoryTag, color: mem.color, borderColor: mem.color }}>{mem.label}</span>
+                      {st.seen > 0 && (
+                        <span style={s.wordItemStats}>{Math.round(mem.score * 100)}%{(() => { const last = getLastStudied(stats, w); return last ? ` · ${formatRelativeDate(last)}` : ""; })()}</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
           </div>
           <div style={s.scrollFade} />
-          </div>{/* scrollWrapper */}
+          </div>
+
+          {/* Preview modal */}
+          {crossPreviewW && (() => {
+            const pw = crossPreviewW;
+            const pParts = highlightWord(pw.example_en, pw.word);
+            const pMem = getCrossMemLevel(pw);
+            const pSt = getWordStats(stats, pw);
+            const deckId = wordToDeckMap.get(statsKey(pw));
+            const deck = deckId ? decks.find(d => d.id === deckId) : null;
+            const folder = deck && deck.folderId ? folders.find(f => f.id === deck.folderId) : null;
+            const pSourceLabel = deck ? (folder ? `${folder.name} › ${deck.name}` : deck.name) : "";
+            return (
+              <div style={s.modalOverlay} onClick={() => setCrossPreviewKey(null)}>
+                <div style={{ width: "100%", maxWidth: "400px", display: "flex", flexDirection: "column", gap: "14px", perspective: "1200px" }} onClick={e => e.stopPropagation()}>
+                  {pSourceLabel && (
+                    <p style={{ fontSize: "12px", color: t.textMuted, textAlign: "center", margin: 0 }}>{pSourceLabel}</p>
+                  )}
+                  <div
+                    style={{ ...s.flipContainer, cursor: "pointer" }}
+                    onClick={() => setCrossPreviewFlipped(!crossPreviewFlipped)}
+                  >
+                    <div style={{
+                      ...s.flipInner,
+                      transform: crossPreviewFlipped ? "rotateY(180deg)" : "rotateY(0deg)",
+                      transition: "transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                    }}>
+                      <div style={s.flipFace}>
+                        <div style={{ ...s.card, height: "440px", margin: 0 }}>
+                          <div style={s.exampleArea}>
+                            {pw.example_en ? (
+                              <p style={s.exampleSentence}>
+                                {Array.isArray(pParts) ? pParts.map((part, i) => {
+                                  const isHl = part.toLowerCase().startsWith(pw.word.toLowerCase());
+                                  return isHl ? <span key={i} style={s.highlight}>{part}</span> : <span key={i}>{part}</span>;
+                                }) : pw.example_en}
+                              </p>
+                            ) : (
+                              <p style={{ ...s.exampleSentence, fontSize: "28px", fontWeight: "700", textAlign: "center", color: t.highlightText }}>
+                                {pw.word}
+                              </p>
+                            )}
+                          </div>
+                          <p style={s.tapHint}>タップで裏面を表示</p>
+                        </div>
+                      </div>
+                      <div style={{ ...s.flipFace, ...s.flipBack }}>
+                        <div style={{ ...s.card, height: "440px", margin: 0 }}>
+                          {pw.example_en && (
+                            <p style={{ ...s.exampleSentence, fontSize: "14px", color: t.textMuted }}>
+                              {Array.isArray(pParts) ? pParts.map((part, i) => {
+                                const isHl = part.toLowerCase().startsWith(pw.word.toLowerCase());
+                                return isHl ? <span key={i} style={{ ...s.highlight, fontSize: "14px" }}>{part}</span> : <span key={i}>{part}</span>;
+                              }) : pw.example_en}
+                            </p>
+                          )}
+                          <div style={s.cardDivider} />
+                          <div style={s.answerArea}>
+                            <div style={s.wordMeaning}>
+                              <span style={s.answerWord}>{pw.word}</span>
+                              <span style={s.answerMeaningText}>{pw.meaning}</span>
+                            </div>
+                            {pw.example_ja && <p style={s.answerTranslation}>{pw.example_ja}</p>}
+                            {pw.note && <p style={s.answerNote}>{pw.note}</p>}
+                          </div>
+                          <p style={s.tapHint}>タップで表面に戻す</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <button style={{ ...s.ghostBtn, flex: 1, padding: "12px" }} onClick={() => setCrossPreviewKey(null)}>
+                      閉じる
+                    </button>
+                  </div>
+
+                  <div style={{ display: "flex", justifyContent: "center", gap: "12px", fontSize: "12px", color: t.textMuted }}>
+                    <span style={{ color: pMem.color }}>{pMem.label}</span>
+                    {pSt.seen > 0 && <span>{Math.round(pMem.score * 100)}%</span>}
+                    {(() => { const last = getLastStudied(stats, pw); return last ? <span>{formatRelativeDate(last)}</span> : null; })()}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </motion.div>
     );
