@@ -2439,7 +2439,7 @@ export default function RapidCycleApp() {
                       <input style={s.editInput} value={editForm.meaning} onChange={e => setEditForm(f => ({ ...f, meaning: e.target.value }))} placeholder="意味" />
                       <input style={{ ...s.editInput, fontSize: "12px" }} value={editForm.example_en} onChange={e => setEditForm(f => ({ ...f, example_en: e.target.value }))} placeholder="例文（英語）" />
                       <input style={{ ...s.editInput, fontSize: "12px" }} value={editForm.example_ja} onChange={e => setEditForm(f => ({ ...f, example_ja: e.target.value }))} placeholder="例文（和訳）" />
-                      <textarea style={{ ...s.editInput, fontSize: "12px", minHeight: "60px", resize: "vertical" }} value={editForm.note} onChange={e => setEditForm(f => ({ ...f, note: e.target.value }))} placeholder="補足（任意）" />
+                      <textarea style={{ ...s.editInput, fontSize: "12px", minHeight: "120px", resize: "vertical" }} value={editForm.note} onChange={e => setEditForm(f => ({ ...f, note: e.target.value }))} placeholder="補足（任意）" />
                     </div>
                     <div style={s.editActions}>
                       <button style={s.editSaveBtn} onClick={saveEdit}>保存</button>
@@ -2480,7 +2480,7 @@ export default function RapidCycleApp() {
                     <input style={s.editInput} value={editForm.meaning} onChange={e => setEditForm(f => ({ ...f, meaning: e.target.value }))} placeholder="意味" />
                     <input style={{ ...s.editInput, fontSize: "12px" }} value={editForm.example_en} onChange={e => setEditForm(f => ({ ...f, example_en: e.target.value }))} placeholder="例文（英語）" />
                     <input style={{ ...s.editInput, fontSize: "12px" }} value={editForm.example_ja} onChange={e => setEditForm(f => ({ ...f, example_ja: e.target.value }))} placeholder="例文（和訳）" />
-                    <textarea style={{ ...s.editInput, fontSize: "12px", minHeight: "60px", resize: "vertical" }} value={editForm.note} onChange={e => setEditForm(f => ({ ...f, note: e.target.value }))} placeholder="補足（任意）" />
+                    <textarea style={{ ...s.editInput, fontSize: "12px", minHeight: "120px", resize: "vertical" }} value={editForm.note} onChange={e => setEditForm(f => ({ ...f, note: e.target.value }))} placeholder="補足（任意）" />
                   </div>
                   <div style={s.editActions}>
                     <button style={s.editSaveBtn} onClick={saveEdit}>追加</button>
