@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, Reorder } from "framer-motion";
 
 // ─── CONSTANTS ───
 const STORAGE_KEY_DECKS = "rc_decks";
@@ -584,6 +584,7 @@ export default function RapidCycleApp() {
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState({});
+  const [reorderMode, setReorderMode] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(null); // { type: "deck"|"folder"|"word"|"stats", id?, idx?, name }
   const [backupStatus, setBackupStatus] = useState("");
 
@@ -596,6 +597,30 @@ export default function RapidCycleApp() {
   useEffect(() => { saveToStorage(STORAGE_KEY_SETTINGS, settings); }, [settings]);
   useEffect(() => { saveToStorage(STORAGE_KEY_FOLDERS, folders); }, [folders]);
   useEffect(() => { saveToStorage(STORAGE_KEY_PENDING, pending); }, [pending]);
+
+  // Reset reorder mode when leaving home
+  useEffect(() => { if (view !== "home") setReorderMode(false); }, [view]);
+
+  // One-time order field migration for folders/decks
+  const orderMigratedRef = useRef(false);
+  useEffect(() => {
+    if (orderMigratedRef.current) return;
+    orderMigratedRef.current = true;
+    setFolders(prev => {
+      if (!prev.some(f => typeof f.order !== "number")) return prev;
+      return prev.map((f, i) => ({ ...f, order: typeof f.order === "number" ? f.order : i }));
+    });
+    setDecks(prev => {
+      if (!prev.some(d => typeof d.order !== "number")) return prev;
+      const groups = {};
+      return prev.map(d => {
+        if (typeof d.order === "number") return d;
+        const key = d.folderId ?? "__unfiled__";
+        groups[key] = (groups[key] ?? -1) + 1;
+        return { ...d, order: groups[key] };
+      });
+    });
+  }, []);
 
   // Safari-style swipe-back gesture (left edge → right, all screens except study)
   const swipeBackRef = useRef(null);
@@ -1181,7 +1206,9 @@ export default function RapidCycleApp() {
   // ─── DECK MANAGEMENT ───
   const saveDeck = (name, words, folderId = null) => {
     const id = Date.now().toString(36);
-    const newDeck = { id, name, words, createdAt: Date.now(), folderId };
+    const siblings = decks.filter(d => (d.folderId ?? null) === (folderId ?? null));
+    const maxOrder = siblings.reduce((m, d) => Math.max(m, d.order ?? -1), -1);
+    const newDeck = { id, name, words, createdAt: Date.now(), folderId, order: maxOrder + 1 };
     setDecks(prev => [newDeck, ...prev]);
     if (settings.gasUrl) {
       const controller = new AbortController();
@@ -1209,7 +1236,8 @@ export default function RapidCycleApp() {
   // ─── FOLDER MANAGEMENT ───
   const createFolder = (name) => {
     const id = Date.now().toString(36) + "f";
-    const folder = { id, name };
+    const maxOrder = folders.reduce((m, f) => Math.max(m, f.order ?? -1), -1);
+    const folder = { id, name, order: maxOrder + 1 };
     setFolders(prev => [...prev, folder]);
     if (settings.gasUrl) {
       // setFolders 直後は state 更新前なので次フレームで実行
@@ -1272,12 +1300,15 @@ export default function RapidCycleApp() {
   };
 
   const moveDeckToFolder = (deckId, folderId) => {
-    setDecks(prev => prev.map(d => d.id === deckId ? { ...d, folderId } : d));
+    const targetSiblings = decks.filter(d => d.id !== deckId && (d.folderId ?? null) === (folderId ?? null));
+    const maxOrder = targetSiblings.reduce((m, d) => Math.max(m, d.order ?? -1), -1);
+    const newOrder = maxOrder + 1;
+    setDecks(prev => prev.map(d => d.id === deckId ? { ...d, folderId, order: newOrder } : d));
     if (settings.gasUrl) {
       const targetDeck = decks.find(d => d.id === deckId);
       if (targetDeck) {
         const controller = new AbortController();
-        syncDeck({ ...targetDeck, folderId }, controller.signal).catch(err => {
+        syncDeck({ ...targetDeck, folderId, order: newOrder }, controller.signal).catch(err => {
           if (err && err.name === "AbortError") return;
           console.warn("immediate syncDeck (folder move) failed, adding to pending", err);
           addPendingDirtyDeck(deckId);
@@ -1286,8 +1317,8 @@ export default function RapidCycleApp() {
     }
   };
 
-  const getDecksInFolder = (folderId) => decks.filter(d => d.folderId === folderId);
-  const getUnfiledDecks = () => decks.filter(d => !d.folderId);
+  const getDecksInFolder = (folderId) => decks.filter(d => d.folderId === folderId).sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity));
+  const getUnfiledDecks = () => decks.filter(d => !d.folderId).sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity));
 
   const getMemoryLevelForWord = (w) => {
     const key = typeof w === "object" ? statsKey(w) : w;
@@ -1704,25 +1735,55 @@ export default function RapidCycleApp() {
   // ── HOME ──
   if (view === "home") {
     const unfiledDecks = getUnfiledDecks();
+    const sortedFolders = [...folders].sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity));
     const totalWords = decks.reduce((sum, d) => sum + d.words.length, 0);
     const dueCount = collectDueWords(decks, stats, settings).length;
+
+    const jigglePhase = (id) => {
+      // deterministic per-id phase 0.18 ~ 0.26
+      let h = 0;
+      for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+      return 0.18 + ((h % 100) / 100) * 0.08;
+    };
 
     const renderDeckItem = (deck) => {
       const wc = deck.words.length;
       const studied = deck.words.filter(w => stats[statsKey(w)]?.seen > 0).length;
-      return (
-        <div key={deck.id} style={s.deckCard}>
+      const inner = (
+        <div style={s.deckCard}>
           <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
-            <div style={s.deckInfo} onClick={() => { setActiveDeck(deck); setView("detail"); }}>
+            <div
+              style={{ ...s.deckInfo, cursor: reorderMode ? "grab" : s.deckInfo.cursor }}
+              onClick={reorderMode ? undefined : () => { setActiveDeck(deck); setView("detail"); }}
+            >
               <span style={s.deckName}>{deck.name}</span>
               <span style={s.deckMeta}>{wc}語 · {studied}語 学習済み</span>
             </div>
             {renderMemoryBar(deck.words)}
             <div style={s.deckActions}>
-              <button style={s.deckPlayBtn} onClick={() => startStudy(deck)}>▶</button>
+              <button
+                style={{ ...s.deckPlayBtn, opacity: reorderMode ? 0.4 : 1 }}
+                onPointerDown={reorderMode ? (e) => e.stopPropagation() : undefined}
+                onClick={reorderMode ? undefined : () => startStudy(deck)}
+                disabled={reorderMode}
+              >▶</button>
             </div>
           </div>
         </div>
+      );
+      if (!reorderMode) return <div key={deck.id}>{inner}</div>;
+      return (
+        <Reorder.Item
+          key={deck.id}
+          value={deck}
+          drag="y"
+          style={{ listStyle: "none" }}
+          animate={{ rotate: [-0.6, 0.6, -0.6] }}
+          transition={{ duration: jigglePhase(deck.id), repeat: Infinity, ease: "easeInOut" }}
+          whileDrag={{ rotate: 0, scale: 1.03, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 5 }}
+        >
+          {inner}
+        </Reorder.Item>
       );
     };
 
@@ -1742,17 +1803,28 @@ export default function RapidCycleApp() {
                 <p style={s.brandSub}>高速周回フラッシュカード</p>
               </div>
             </div>
-            <button style={s.settingsBtn} onClick={() => setView("settings")}>
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                <path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" stroke={t.textMuted} strokeWidth="1.5"/>
-                <path d="M16.2 12.2a1.4 1.4 0 00.28 1.54l.05.05a1.7 1.7 0 11-2.4 2.4l-.05-.05a1.4 1.4 0 00-1.54-.28 1.4 1.4 0 00-.84 1.28v.14a1.7 1.7 0 11-3.4 0v-.07a1.4 1.4 0 00-.92-1.28 1.4 1.4 0 00-1.54.28l-.05.05a1.7 1.7 0 11-2.4-2.4l.05-.05a1.4 1.4 0 00.28-1.54 1.4 1.4 0 00-1.28-.84H2.3a1.7 1.7 0 110-3.4h.07a1.4 1.4 0 001.28-.92 1.4 1.4 0 00-.28-1.54l-.05-.05a1.7 1.7 0 112.4-2.4l.05.05a1.4 1.4 0 001.54.28h.07a1.4 1.4 0 00.84-1.28V2.3a1.7 1.7 0 113.4 0v.07a1.4 1.4 0 00.84 1.28 1.4 1.4 0 001.54-.28l.05-.05a1.7 1.7 0 112.4 2.4l-.05.05a1.4 1.4 0 00-.28 1.54v.07a1.4 1.4 0 001.28.84h.14a1.7 1.7 0 110 3.4h-.07a1.4 1.4 0 00-1.28.84z" stroke={t.textMuted} strokeWidth="1.5"/>
-              </svg>
-            </button>
+            {reorderMode ? (
+              <button
+                style={{ ...s.editSaveBtn, padding: "8px 16px", fontSize: "14px" }}
+                onClick={() => setReorderMode(false)}
+              >完了</button>
+            ) : (
+              <button style={s.settingsBtn} onClick={() => setView("settings")}>
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                  <path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" stroke={t.textMuted} strokeWidth="1.5"/>
+                  <path d="M16.2 12.2a1.4 1.4 0 00.28 1.54l.05.05a1.7 1.7 0 11-2.4 2.4l-.05-.05a1.4 1.4 0 00-1.54-.28 1.4 1.4 0 00-.84 1.28v.14a1.7 1.7 0 11-3.4 0v-.07a1.4 1.4 0 00-.92-1.28 1.4 1.4 0 00-1.54.28l-.05.05a1.7 1.7 0 11-2.4-2.4l.05-.05a1.4 1.4 0 00.28-1.54 1.4 1.4 0 00-1.28-.84H2.3a1.7 1.7 0 110-3.4h.07a1.4 1.4 0 001.28-.92 1.4 1.4 0 00-.28-1.54l-.05-.05a1.7 1.7 0 112.4-2.4l.05.05a1.4 1.4 0 001.54.28h.07a1.4 1.4 0 00.84-1.28V2.3a1.7 1.7 0 113.4 0v.07a1.4 1.4 0 00.84 1.28 1.4 1.4 0 001.54-.28l.05-.05a1.7 1.7 0 112.4 2.4l-.05.05a1.4 1.4 0 00-.28 1.54v.07a1.4 1.4 0 001.28.84h.14a1.7 1.7 0 110 3.4h-.07a1.4 1.4 0 00-1.28.84z" stroke={t.textMuted} strokeWidth="1.5"/>
+                </svg>
+              </button>
+            )}
           </header>
 
           {/* Cross-study button (fixed, outside scroll area) */}
           {totalWords > 0 && (
-            <button style={s.crossStudyBtn} onClick={() => { setActiveFolder(null); setView("crossSetup"); }}>
+            <button
+              style={{ ...s.crossStudyBtn, opacity: reorderMode ? 0.4 : 1 }}
+              onClick={reorderMode ? undefined : () => { setActiveFolder(null); setView("crossSetup"); }}
+              disabled={reorderMode}
+            >
               <span style={{ fontSize: "16px" }}>🔀</span>
               <div>
                 <span style={{ fontSize: "14px", fontWeight: "600", color: t.text }}>横断学習</span>
@@ -1764,8 +1836,9 @@ export default function RapidCycleApp() {
           {/* Review button */}
           {dueCount > 0 && (
             <button
-              style={{ ...s.crossStudyBtn, border: `1px solid ${t.accentBorder}` }}
-              onClick={() => setView("review")}
+              style={{ ...s.crossStudyBtn, border: `1px solid ${t.accentBorder}`, opacity: reorderMode ? 0.4 : 1 }}
+              onClick={reorderMode ? undefined : () => setView("review")}
+              disabled={reorderMode}
             >
               <span style={{ fontSize: "16px" }}>🔁</span>
               <div>
@@ -1787,27 +1860,65 @@ export default function RapidCycleApp() {
           ) : (
             <div style={s.deckList}>
               {/* Folders with their decks nested */}
-              {folders.map(folder => {
-                const folderDecks = getDecksInFolder(folder.id);
-                const folderWords = folderDecks.reduce((sum, d) => sum + d.words.length, 0);
-                const isCollapsed = collapsedFolders[folder.id];
-                return (
-                  <div key={folder.id}>
+              {(() => {
+                const renderFolder = (folder) => {
+                  const folderDecks = getDecksInFolder(folder.id);
+                  const folderWords = folderDecks.reduce((sum, d) => sum + d.words.length, 0);
+                  const isCollapsed = collapsedFolders[folder.id];
+                  const folderRow = (
                     <div style={s.deckCard}>
                       <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
-                        <div style={{ ...s.deckInfo, flexDirection: "row", alignItems: "center", gap: "10px" }} onClick={() => toggleFolderCollapse(folder.id)}>
-                          <span style={{ fontSize: "12px", color: t.textMuted, transition: "transform 0.2s", transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)" }}>▼</span>
-                          <div style={{ display: "flex", flexDirection: "column", gap: "2px", flex: 1, minWidth: 0 }}>
-                            <span style={s.deckName}>📁 {folder.name}</span>
-                            <span style={s.deckMeta}>{folderDecks.length}冊 · {folderWords}語</span>
+                        {reorderMode ? (
+                          <>
+                            <button
+                              style={{
+                                background: "none",
+                                border: "none",
+                                padding: "8px 6px",
+                                marginLeft: "8px",
+                                cursor: "pointer",
+                                WebkitTapHighlightColor: "transparent",
+                                touchAction: "manipulation",
+                                minWidth: "32px",
+                                minHeight: "32px",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onClick={(e) => { e.stopPropagation(); toggleFolderCollapse(folder.id); }}
+                            >
+                              <span style={{ fontSize: "12px", color: t.textMuted, transition: "transform 0.2s", transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)", display: "inline-block" }}>▼</span>
+                            </button>
+                            <div style={{ ...s.deckInfo, flexDirection: "row", alignItems: "center", gap: "10px", cursor: "grab", padding: "16px 10px" }}>
+                              <div style={{ display: "flex", flexDirection: "column", gap: "2px", flex: 1, minWidth: 0 }}>
+                                <span style={s.deckName}>📁 {folder.name}</span>
+                                <span style={s.deckMeta}>{folderDecks.length}冊 · {folderWords}語</span>
+                              </div>
+                            </div>
+                          </>
+                        ) : (
+                          <div style={{ ...s.deckInfo, flexDirection: "row", alignItems: "center", gap: "10px" }} onClick={() => toggleFolderCollapse(folder.id)}>
+                            <span style={{ fontSize: "12px", color: t.textMuted, transition: "transform 0.2s", transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)" }}>▼</span>
+                            <div style={{ display: "flex", flexDirection: "column", gap: "2px", flex: 1, minWidth: 0 }}>
+                              <span style={s.deckName}>📁 {folder.name}</span>
+                              <span style={s.deckMeta}>{folderDecks.length}冊 · {folderWords}語</span>
+                            </div>
                           </div>
-                        </div>
+                        )}
                         {renderMemoryBar(folderDecks.flatMap(d => d.words))}
                         <div style={s.deckActions}>
-                          <button style={s.deckPlayBtn} onClick={() => { setActiveFolder(folder); setView("folder"); }}>→</button>
+                          <button
+                            style={{ ...s.deckPlayBtn, opacity: reorderMode ? 0.4 : 1 }}
+                            onPointerDown={reorderMode ? (e) => e.stopPropagation() : undefined}
+                            onClick={reorderMode ? undefined : () => { setActiveFolder(folder); setView("folder"); }}
+                            disabled={reorderMode}
+                          >→</button>
                         </div>
                       </div>
                     </div>
+                  );
+                  const folderChildren = (
                     <AnimatePresence initial={false}>
                       {!isCollapsed && folderDecks.length > 0 && (
                         <motion.div
@@ -1819,20 +1930,89 @@ export default function RapidCycleApp() {
                           style={{ overflow: "hidden" }}
                         >
                           <div style={{ marginLeft: "16px", borderLeft: `2px solid ${t.borderLight}`, paddingLeft: "12px", paddingTop: "4px" }}>
-                            {folderDecks.map(renderDeckItem)}
+                            {reorderMode ? (
+                              <Reorder.Group
+                                axis="y"
+                                values={folderDecks}
+                                onReorder={(newOrder) => {
+                                  setDecks(prev => {
+                                    const orderMap = new Map(newOrder.map((d, i) => [d.id, i]));
+                                    return prev.map(d => orderMap.has(d.id) ? { ...d, order: orderMap.get(d.id) } : d);
+                                  });
+                                }}
+                                style={{ listStyle: "none", padding: 0, margin: 0 }}
+                              >
+                                {folderDecks.map(renderDeckItem)}
+                              </Reorder.Group>
+                            ) : (
+                              folderDecks.map(renderDeckItem)
+                            )}
                           </div>
                         </motion.div>
                       )}
                     </AnimatePresence>
-                  </div>
-                );
-              })}
+                  );
+                  if (!reorderMode) {
+                    return (
+                      <div key={folder.id}>
+                        {folderRow}
+                        {folderChildren}
+                      </div>
+                    );
+                  }
+                  return (
+                    <Reorder.Item
+                      key={folder.id}
+                      value={folder}
+                      drag="y"
+                      style={{ listStyle: "none" }}
+                      animate={{ rotate: [-0.6, 0.6, -0.6] }}
+                      transition={{ duration: jigglePhase(folder.id), repeat: Infinity, ease: "easeInOut" }}
+                      whileDrag={{ rotate: 0, scale: 1.03, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 5 }}
+                    >
+                      {folderRow}
+                      {folderChildren}
+                    </Reorder.Item>
+                  );
+                };
+                if (reorderMode) {
+                  return (
+                    <Reorder.Group
+                      axis="y"
+                      values={sortedFolders}
+                      onReorder={(newOrder) => {
+                        setFolders(newOrder.map((f, i) => ({ ...f, order: i })));
+                      }}
+                      style={{ listStyle: "none", padding: 0, margin: 0 }}
+                    >
+                      {sortedFolders.map(renderFolder)}
+                    </Reorder.Group>
+                  );
+                }
+                return sortedFolders.map(renderFolder);
+              })()}
 
               {/* Unfiled decks — shown as regular deck items, no "未分類" header */}
               {unfiledDecks.length > 0 && (
                 <>
                   {folders.length > 0 && unfiledDecks.length > 0 && <div style={{ height: "8px" }} />}
-                  {unfiledDecks.map(renderDeckItem)}
+                  {reorderMode ? (
+                    <Reorder.Group
+                      axis="y"
+                      values={unfiledDecks}
+                      onReorder={(newOrder) => {
+                        setDecks(prev => {
+                          const orderMap = new Map(newOrder.map((d, i) => [d.id, i]));
+                          return prev.map(d => orderMap.has(d.id) ? { ...d, order: orderMap.get(d.id) } : d);
+                        });
+                      }}
+                      style={{ listStyle: "none", padding: 0, margin: 0 }}
+                    >
+                      {unfiledDecks.map(renderDeckItem)}
+                    </Reorder.Group>
+                  ) : (
+                    unfiledDecks.map(renderDeckItem)
+                  )}
                 </>
               )}
             </div>
@@ -1855,26 +2035,33 @@ export default function RapidCycleApp() {
           </div>{/* scrollWrapper */}
 
           {/* FAB */}
-          <div style={s.fabContainer}>
-            {showAddMenu && (
-              <>
-                <div style={s.fabBackdrop} onClick={() => setShowAddMenu(false)} />
-                <div style={s.fabMenu}>
-                  <button style={s.fabMenuItem} onClick={() => { setShowAddMenu(false); setView("import"); }}>
-                    <span style={{ fontSize: "16px" }}>📚</span> 単語帳を追加
-                  </button>
-                  <button style={s.fabMenuItem} onClick={() => { setShowAddMenu(false); setShowNewFolder(true); }}>
-                    <span style={{ fontSize: "16px" }}>📁</span> フォルダを作成
-                  </button>
-                </div>
-              </>
-            )}
-            <button style={{ ...s.fab, transform: showAddMenu ? "rotate(45deg)" : "none" }} onClick={() => setShowAddMenu(v => !v)}>
-              <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-                <path d="M11 4v14M4 11h14" stroke={t.accentText} strokeWidth="2.2" strokeLinecap="round" />
-              </svg>
-            </button>
-          </div>
+          {!reorderMode && (
+            <div style={s.fabContainer}>
+              {showAddMenu && (
+                <>
+                  <div style={s.fabBackdrop} onClick={() => setShowAddMenu(false)} />
+                  <div style={s.fabMenu}>
+                    <button style={s.fabMenuItem} onClick={() => { setShowAddMenu(false); setView("import"); }}>
+                      <span style={{ fontSize: "16px" }}>📚</span> 単語帳を追加
+                    </button>
+                    <button style={s.fabMenuItem} onClick={() => { setShowAddMenu(false); setShowNewFolder(true); }}>
+                      <span style={{ fontSize: "16px" }}>📁</span> フォルダを作成
+                    </button>
+                    {decks.length + folders.length > 1 && (
+                      <button style={s.fabMenuItem} onClick={() => { setShowAddMenu(false); setReorderMode(true); }}>
+                        <span style={{ fontSize: "16px" }}>↕</span> 並び替え
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+              <button style={{ ...s.fab, transform: showAddMenu ? "rotate(45deg)" : "none" }} onClick={() => setShowAddMenu(v => !v)}>
+                <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                  <path d="M11 4v14M4 11h14" stroke={t.accentText} strokeWidth="2.2" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
+          )}
 
           {/* Folder create modal */}
           {showNewFolder && (
