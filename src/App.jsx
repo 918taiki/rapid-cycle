@@ -1739,13 +1739,6 @@ export default function RapidCycleApp() {
     const totalWords = decks.reduce((sum, d) => sum + d.words.length, 0);
     const dueCount = collectDueWords(decks, stats, settings).length;
 
-    const jigglePhase = (id) => {
-      // deterministic per-id phase 0.18 ~ 0.26
-      let h = 0;
-      for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-      return 0.18 + ((h % 100) / 100) * 0.08;
-    };
-
     const renderDeckItem = (deck) => {
       const wc = deck.words.length;
       const studied = deck.words.filter(w => stats[statsKey(w)]?.seen > 0).length;
@@ -1778,9 +1771,7 @@ export default function RapidCycleApp() {
           value={deck}
           drag="y"
           style={{ listStyle: "none" }}
-          animate={{ rotate: [-0.6, 0.6, -0.6] }}
-          transition={{ duration: jigglePhase(deck.id), repeat: Infinity, ease: "easeInOut" }}
-          whileDrag={{ rotate: 0, scale: 1.03, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 5 }}
+          whileDrag={{ scale: 1.03, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 5 }}
         >
           {inner}
         </Reorder.Item>
@@ -1803,21 +1794,15 @@ export default function RapidCycleApp() {
                 <p style={s.brandSub}>高速周回フラッシュカード</p>
               </div>
             </div>
-            {reorderMode ? (
-              <button
-                style={{ ...s.editSaveBtn, padding: "8px 16px", fontSize: "14px" }}
-                onClick={() => setReorderMode(false)}
-              >完了</button>
-            ) : (
-              <button style={s.settingsBtn} onClick={() => setView("settings")}>
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                  <path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" stroke={t.textMuted} strokeWidth="1.5"/>
-                  <path d="M16.2 12.2a1.4 1.4 0 00.28 1.54l.05.05a1.7 1.7 0 11-2.4 2.4l-.05-.05a1.4 1.4 0 00-1.54-.28 1.4 1.4 0 00-.84 1.28v.14a1.7 1.7 0 11-3.4 0v-.07a1.4 1.4 0 00-.92-1.28 1.4 1.4 0 00-1.54.28l-.05.05a1.7 1.7 0 11-2.4-2.4l.05-.05a1.4 1.4 0 00.28-1.54 1.4 1.4 0 00-1.28-.84H2.3a1.7 1.7 0 110-3.4h.07a1.4 1.4 0 001.28-.92 1.4 1.4 0 00-.28-1.54l-.05-.05a1.7 1.7 0 112.4-2.4l.05.05a1.4 1.4 0 001.54.28h.07a1.4 1.4 0 00.84-1.28V2.3a1.7 1.7 0 113.4 0v.07a1.4 1.4 0 00.84 1.28 1.4 1.4 0 001.54-.28l.05-.05a1.7 1.7 0 112.4 2.4l-.05.05a1.4 1.4 0 00-.28 1.54v.07a1.4 1.4 0 001.28.84h.14a1.7 1.7 0 110 3.4h-.07a1.4 1.4 0 00-1.28.84z" stroke={t.textMuted} strokeWidth="1.5"/>
-                </svg>
-              </button>
-            )}
+            <button style={{ ...s.settingsBtn, opacity: reorderMode ? 0.4 : 1 }} onClick={reorderMode ? undefined : () => setView("settings")} disabled={reorderMode}>
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" stroke={t.textMuted} strokeWidth="1.5"/>
+                <path d="M16.2 12.2a1.4 1.4 0 00.28 1.54l.05.05a1.7 1.7 0 11-2.4 2.4l-.05-.05a1.4 1.4 0 00-1.54-.28 1.4 1.4 0 00-.84 1.28v.14a1.7 1.7 0 11-3.4 0v-.07a1.4 1.4 0 00-.92-1.28 1.4 1.4 0 00-1.54.28l-.05.05a1.7 1.7 0 11-2.4-2.4l.05-.05a1.4 1.4 0 00.28-1.54 1.4 1.4 0 00-1.28-.84H2.3a1.7 1.7 0 110-3.4h.07a1.4 1.4 0 001.28-.92 1.4 1.4 0 00-.28-1.54l-.05-.05a1.7 1.7 0 112.4-2.4l.05.05a1.4 1.4 0 001.54.28h.07a1.4 1.4 0 00.84-1.28V2.3a1.7 1.7 0 113.4 0v.07a1.4 1.4 0 00.84 1.28 1.4 1.4 0 001.54-.28l.05-.05a1.7 1.7 0 112.4 2.4l-.05.05a1.4 1.4 0 00-.28 1.54v.07a1.4 1.4 0 001.28.84h.14a1.7 1.7 0 110 3.4h-.07a1.4 1.4 0 00-1.28.84z" stroke={t.textMuted} strokeWidth="1.5"/>
+              </svg>
+            </button>
           </header>
 
+          <div style={{ position: "relative" }}>
           {/* Cross-study button (fixed, outside scroll area) */}
           {totalWords > 0 && (
             <button
@@ -1847,6 +1832,29 @@ export default function RapidCycleApp() {
               </div>
             </button>
           )}
+          {reorderMode && (
+            <div style={{
+              position: "absolute",
+              left: "50%",
+              top: "50%",
+              transform: "translate(-50%, -50%)",
+              background: t.surface,
+              border: `1px solid ${t.accentBorder}`,
+              borderRadius: "12px",
+              padding: "12px 20px",
+              boxShadow: "0 4px 16px rgba(0, 0, 0, 0.3)",
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              pointerEvents: "none",
+              zIndex: 5,
+              whiteSpace: "nowrap",
+            }}>
+              <span style={{ fontSize: "16px" }}>↕</span>
+              <span style={{ fontSize: "14px", fontWeight: "600", color: t.text }}>並べ替え中...</span>
+            </div>
+          )}
+          </div>
 
           <div style={s.scrollWrapper}>
           <div style={s.scrollArea}>
@@ -1966,9 +1974,7 @@ export default function RapidCycleApp() {
                       value={folder}
                       drag="y"
                       style={{ listStyle: "none" }}
-                      animate={{ rotate: [-0.6, 0.6, -0.6] }}
-                      transition={{ duration: jigglePhase(folder.id), repeat: Infinity, ease: "easeInOut" }}
-                      whileDrag={{ rotate: 0, scale: 1.03, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 5 }}
+                      whileDrag={{ scale: 1.03, boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 5 }}
                     >
                       {folderRow}
                       {folderChildren}
@@ -2034,8 +2040,24 @@ export default function RapidCycleApp() {
           <div style={s.scrollFade} />
           </div>{/* scrollWrapper */}
 
-          {/* FAB */}
-          {!reorderMode && (
+          {/* FAB / Done button */}
+          {reorderMode ? (
+            <div style={s.fabContainer}>
+              <button
+                style={{
+                  ...s.fab,
+                  width: "auto",
+                  height: "44px",
+                  borderRadius: "22px",
+                  padding: "0 22px",
+                  fontSize: "15px",
+                  fontWeight: "600",
+                  color: t.accentText,
+                }}
+                onClick={() => setReorderMode(false)}
+              >完了</button>
+            </div>
+          ) : (
             <div style={s.fabContainer}>
               {showAddMenu && (
                 <>
